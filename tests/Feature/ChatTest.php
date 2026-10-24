@@ -162,4 +162,64 @@ class ChatTest extends TestCase
 
         Event::assertDispatched(MessageSent::class);
     }
+
+    public function test_agent_can_create_direct_chat_with_optional_encryption(): void
+    {
+        $response = $this->actingAs($this->agent)->post('/conversations/direct', [
+            'name' => 'Jordan Miller',
+            'email' => 'jordan@example.com',
+            'is_encrypted' => true,
+            'initial_message' => 'Secure session initialized.',
+        ]);
+
+        $response->assertRedirect();
+
+        $this->assertDatabaseHas('conversations', [
+            'customer_name' => 'Jordan Miller',
+            'customer_email' => 'jordan@example.com',
+            'type' => 'direct',
+            'is_encrypted' => true,
+        ]);
+    }
+
+    public function test_agent_can_create_group_chat(): void
+    {
+        $otherAgent = User::create([
+            'name' => 'Elena Rostova',
+            'email' => 'elena@fluxdesk.io',
+            'password' => bcrypt('password123'),
+        ]);
+
+        $response = $this->actingAs($this->agent)->post('/conversations/group', [
+            'group_name' => 'Incident Response Team',
+            'group_description' => 'Real-time devops room',
+            'member_ids' => [$this->agent->id, $otherAgent->id],
+            'is_encrypted' => false,
+        ]);
+
+        $response->assertRedirect();
+
+        $this->assertDatabaseHas('conversations', [
+            'group_name' => 'Incident Response Team',
+            'type' => 'group',
+        ]);
+    }
+
+    public function test_can_join_new_member_to_workspace(): void
+    {
+        $response = $this->actingAs($this->agent)->post('/members', [
+            'name' => 'Daniel Lee',
+            'email' => 'daniel.lee@fluxdesk.io',
+            'role' => 'Security Engineer',
+            'conversation_id' => $this->conversation->id,
+        ]);
+
+        $response->assertRedirect();
+
+        $this->assertDatabaseHas('users', [
+            'name' => 'Daniel Lee',
+            'email' => 'daniel.lee@fluxdesk.io',
+            'role' => 'Security Engineer',
+        ]);
+    }
 }

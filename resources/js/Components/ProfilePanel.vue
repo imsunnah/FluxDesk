@@ -1,20 +1,15 @@
 <script setup>
 import { computed } from 'vue';
+import { router } from '@inertiajs/vue3';
 import { 
-    User, 
-    Mail, 
-    Phone, 
-    MapPin, 
-    Building, 
-    Calendar, 
-    Tag, 
-    UserCheck, 
-    Activity, 
-    Clock, 
+    Users, 
+    UserPlus, 
+    Lock, 
+    Trash2, 
+    Crown, 
     Shield, 
-    History,
-    Sparkles,
-    CheckCircle2
+    UserMinus, 
+    Check
 } from 'lucide-vue-next';
 
 const props = defineProps({
@@ -26,56 +21,61 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    currentAgent: {
+        type: Object,
+        default: () => ({}),
+    },
     isOpen: {
         type: Boolean,
         default: true,
     },
 });
 
-const emit = defineEmits(['update-conversation', 'close']);
+const emit = defineEmits(['update-conversation', 'close', 'open-add-member', 'delete-chat']);
 
-function formatDate(isoString) {
-    if (!isoString) return 'Recent';
-    const date = new Date(isoString);
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
-}
+const isGroup = computed(() => props.conversation?.type === 'group');
 
-function handleAgentChange(e) {
+// Check if current user is admin or group admin
+const canManageGroup = computed(() => {
+    if (props.currentAgent?.is_admin) return true;
+    const currentMember = props.conversation?.members?.find(m => m.id === props.currentAgent?.id);
+    return currentMember?.pivot?.is_group_admin;
+});
+
+function toggleEncryption() {
     emit('update-conversation', {
-        assigned_agent_id: e.target.value ? Number(e.target.value) : null,
+        is_encrypted: !props.conversation.is_encrypted,
     });
 }
 
-function handlePriorityChange(e) {
-    emit('update-conversation', {
-        priority: e.target.value,
-    });
+function makeAdmin(member) {
+    if (confirm(`Make ${member.name} a Group Admin?`)) {
+        router.post(`/conversations/${props.conversation.id}/members/${member.id}/admin`, {}, {
+            preserveScroll: true,
+            preserveState: true,
+        });
+    }
 }
 
-function handleStatusChange(status) {
-    emit('update-conversation', {
-        status: status,
-    });
+function removeMember(member) {
+    if (confirm(`Remove ${member.name} from this group?`)) {
+        router.delete(`/conversations/${props.conversation.id}/members/${member.id}`, {
+            preserveScroll: true,
+            preserveState: true,
+        });
+    }
 }
-
-// Realistic mock ticket history for customer
-const mockTicketHistory = [
-    { id: 'FD-1092', subject: 'Reverb WebSocket cluster connection latency', status: 'resolved', date: '3 days ago' },
-    { id: 'FD-1048', subject: 'Inertia Vue 3 asset build configuration', status: 'resolved', date: '2 weeks ago' },
-    { id: 'FD-994', subject: 'Enterprise Redis Queue supervisor scaling', status: 'resolved', date: '1 month ago' },
-];
 </script>
 
 <template>
     <aside 
         v-if="isOpen && conversation"
-        class="w-72 lg:w-80 h-full bg-slate-900 border-l border-slate-800/80 flex flex-col overflow-y-auto select-none shrink-0 z-10 transition-all duration-200"
+        class="w-72 lg:w-76 h-full bg-slate-900 border-l border-slate-800 flex flex-col overflow-y-auto select-none shrink-0 z-10 text-slate-200"
     >
-        <!-- Header -->
-        <div class="p-4 border-b border-slate-800/80 flex items-center justify-between bg-slate-900/90">
-            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-1.5">
-                <User class="w-3.5 h-3.5 text-indigo-400" />
-                <span>Customer & Ticket Details</span>
+        <!-- Panel Header -->
+        <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300">
+                {{ isGroup ? 'Group Information' : 'Chat Details' }}
             </h4>
             <button 
                 @click="$emit('close')"
@@ -85,134 +85,103 @@ const mockTicketHistory = [
             </button>
         </div>
 
-        <div class="p-4 space-y-6 flex-1">
-            <!-- Customer Profile Card -->
-            <div class="flex flex-col items-center text-center p-4 rounded-2xl bg-gradient-to-b from-slate-800/60 to-slate-950/60 border border-slate-800">
-                <div class="relative mb-3">
-                    <img 
-                        :src="conversation.customer_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop'" 
-                        :alt="conversation.customer_name"
-                        class="w-16 h-16 rounded-full object-cover ring-2 ring-indigo-500/40 shadow-xl" 
-                    />
-                    <span class="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-500 ring-2 ring-slate-900"></span>
-                </div>
-
-                <h3 class="text-sm font-bold text-slate-100">
-                    {{ conversation.customer_name }}
+        <div class="p-4 space-y-4 flex-1">
+            <!-- Header Card -->
+            <div class="flex flex-col items-center text-center p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                <img 
+                    :src="conversation.customer_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop'" 
+                    :alt="conversation.display_name"
+                    class="w-14 h-14 rounded-full object-cover ring-2 ring-indigo-500/30 mb-2 shadow" 
+                />
+                <h3 class="text-xs font-bold text-slate-100">
+                    {{ conversation.display_name }}
                 </h3>
-                <p class="text-xs text-indigo-400 font-medium mt-0.5">
-                    {{ conversation.customer_company || 'Verified Customer' }}
+                <p class="text-[11px] text-slate-400 mt-0.5 truncate max-w-full">
+                    {{ conversation.group_description || conversation.customer_email }}
                 </p>
 
-                <!-- Contact details table list -->
-                <div class="w-full mt-4 space-y-2 text-left pt-3 border-t border-slate-800/80 text-xs">
-                    <div class="flex items-center space-x-2 text-slate-300">
-                        <Mail class="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                        <span class="truncate text-slate-300">{{ conversation.customer_email }}</span>
+                <!-- Encrypted State Button -->
+                <div 
+                    @click="toggleEncryption"
+                    :class="[
+                        'mt-3 w-full p-2 rounded-lg cursor-pointer flex items-center justify-between text-xs font-semibold border transition-all',
+                        conversation.is_encrypted 
+                            ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300' 
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ]"
+                >
+                    <div class="flex items-center space-x-1.5">
+                        <Lock class="w-3.5 h-3.5" :class="conversation.is_encrypted ? 'text-emerald-400' : 'text-slate-400'" />
+                        <span>{{ conversation.is_encrypted ? 'Encrypted (E2EE)' : 'Standard Chat' }}</span>
                     </div>
-                    <div class="flex items-center space-x-2 text-slate-300" v-if="conversation.customer_phone">
-                        <Phone class="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                        <span>{{ conversation.customer_phone }}</span>
-                    </div>
-                    <div class="flex items-center space-x-2 text-slate-300" v-if="conversation.customer_location">
-                        <MapPin class="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                        <span>{{ conversation.customer_location }}</span>
-                    </div>
+                    <span class="text-[10px] text-slate-500">Toggle</span>
                 </div>
             </div>
 
-            <!-- Ticket Metadata Controls -->
-            <div class="space-y-4">
-                <h5 class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center space-x-1.5">
-                    <Tag class="w-3 h-3 text-indigo-400" />
-                    <span>Ticket Management</span>
-                </h5>
-
-                <!-- Assigned Agent Dropdown -->
-                <div class="space-y-1.5">
-                    <label class="text-[11px] font-medium text-slate-400">Assigned Agent</label>
-                    <div class="relative">
-                        <select 
-                            :value="conversation.assigned_agent_id || ''"
-                            @change="handleAgentChange"
-                            class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                        >
-                            <option value="">Unassigned</option>
-                            <option 
-                                v-for="agent in agents" 
-                                :key="agent.id" 
-                                :value="agent.id"
-                            >
-                                {{ agent.name }} ({{ agent.role }})
-                            </option>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- Priority Selector -->
-                <div class="space-y-1.5">
-                    <label class="text-[11px] font-medium text-slate-400">Ticket Priority</label>
-                    <select 
-                        :value="conversation.priority"
-                        @change="handlePriorityChange"
-                        class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                    >
-                        <option value="low">🟢 Low Priority</option>
-                        <option value="medium">🟡 Medium Priority</option>
-                        <option value="high">🔴 High Priority</option>
-                    </select>
-                </div>
-
-                <!-- Status Toggle Buttons -->
-                <div class="space-y-1.5">
-                    <label class="text-[11px] font-medium text-slate-400">Lifecycle Status</label>
-                    <div class="grid grid-cols-3 gap-1.5">
-                        <button
-                            v-for="st in ['open', 'pending', 'resolved']"
-                            :key="st"
-                            @click="handleStatusChange(st)"
-                            :class="[
-                                'py-1.5 rounded-lg text-xs font-semibold capitalize transition-all border',
-                                conversation.status === st
-                                    ? (st === 'open' ? 'bg-emerald-600/30 text-emerald-300 border-emerald-500/50' : (st === 'pending' ? 'bg-amber-600/30 text-amber-300 border-amber-500/50' : 'bg-slate-700/60 text-slate-200 border-slate-600'))
-                                    : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:text-slate-200'
-                            ]"
-                        >
-                            {{ st }}
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Customer Ticket History -->
-            <div class="space-y-3 pt-2 border-t border-slate-800/80">
-                <h5 class="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+            <!-- Members Section (For Group Chats) -->
+            <div v-if="isGroup" class="space-y-2">
+                <div class="flex items-center justify-between text-xs font-semibold text-slate-300">
                     <span class="flex items-center space-x-1.5">
-                        <History class="w-3 h-3 text-indigo-400" />
-                        <span>Ticket History</span>
+                        <Users class="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Members ({{ conversation.members?.length || 0 }})</span>
                     </span>
-                    <span class="text-[10px] text-slate-500 font-mono">3 previous</span>
-                </h5>
-
-                <div class="space-y-2">
-                    <div 
-                        v-for="item in mockTicketHistory" 
-                        :key="item.id"
-                        class="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                    <button 
+                        @click="$emit('open-add-member')"
+                        class="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-0.5 font-medium"
                     >
-                        <div class="flex items-center justify-between text-[10px] mb-1">
-                            <span class="font-mono text-indigo-400 font-semibold">{{ item.id }}</span>
-                            <span class="text-slate-500">{{ item.date }}</span>
+                        <UserPlus class="w-3 h-3" />
+                        <span>Add</span>
+                    </button>
+                </div>
+
+                <div class="space-y-1.5 max-h-56 overflow-y-auto">
+                    <div 
+                        v-for="member in conversation.members" 
+                        :key="member.id"
+                        class="p-2 rounded-lg bg-slate-950 border border-slate-800/80 flex items-center justify-between text-xs group"
+                    >
+                        <div class="flex items-center space-x-2 min-w-0">
+                            <img :src="member.avatar" class="w-6 h-6 rounded-full object-cover shrink-0" />
+                            <div class="min-w-0">
+                                <div class="font-medium text-slate-200 truncate flex items-center space-x-1">
+                                    <span class="truncate">{{ member.name }}</span>
+                                    <Crown v-if="member.pivot?.is_group_admin" class="w-3 h-3 text-amber-400 shrink-0" title="Group Admin" />
+                                </div>
+                                <div class="text-[10px] text-slate-400 truncate">{{ member.member_id || member.role }}</div>
+                            </div>
                         </div>
-                        <p class="text-xs text-slate-300 line-clamp-1">
-                            {{ item.subject }}
-                        </p>
-                        <div class="mt-1 flex items-center space-x-1 text-[10px] text-emerald-400">
-                            <CheckCircle2 class="w-3 h-3" />
-                            <span>Resolved</span>
+
+                        <!-- Admin controls: Make Admin / Remove Member -->
+                        <div v-if="canManageGroup && member.id !== currentAgent?.id" class="flex items-center space-x-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                v-if="!member.pivot?.is_group_admin"
+                                @click="makeAdmin(member)"
+                                class="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-[10px] font-semibold"
+                                title="Make Group Admin"
+                            >
+                                Admin
+                            </button>
+                            <button
+                                @click="removeMember(member)"
+                                class="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-900"
+                                title="Remove from group"
+                            >
+                                <UserMinus class="w-3 h-3" />
+                            </button>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Danger Zone: Delete Chat Button -->
+            <div class="pt-4 border-t border-slate-800">
+                <button
+                    @click="$emit('delete-chat')"
+                    class="w-full py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-400 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-all"
+                >
+                    <Trash2 class="w-3.5 h-3.5" />
+                    <span>Delete Conversation</span>
+                </button>
             </div>
         </div>
     </aside>

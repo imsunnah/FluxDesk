@@ -16,34 +16,40 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 1. Seed Agents
+        // 1. Seed Agents / Admins
         $alex = User::updateOrCreate(
             ['email' => 'alex@fluxdesk.io'],
             [
-                'name' => 'Alex Rivera',
+                'member_id' => 'ADM-001',
+                'name' => 'Alex Rivera (Admin)',
                 'password' => bcrypt('password123'),
                 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces',
-                'role' => 'Lead Support Specialist',
+                'role' => 'System Administrator',
+                'is_admin' => true,
             ]
         );
 
         $elena = User::updateOrCreate(
             ['email' => 'elena@fluxdesk.io'],
             [
+                'member_id' => 'EMP-102',
                 'name' => 'Elena Rostova',
                 'password' => bcrypt('password123'),
                 'avatar' => 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'Senior Technical Agent',
+                'is_admin' => false,
             ]
         );
 
         $marcus = User::updateOrCreate(
             ['email' => 'marcus@fluxdesk.io'],
             [
+                'member_id' => 'EMP-103',
                 'name' => 'Marcus Vance',
                 'password' => bcrypt('password123'),
                 'avatar' => 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'Customer Success Lead',
+                'is_admin' => false,
             ]
         );
 
@@ -284,6 +290,74 @@ class DatabaseSeeder extends Seeder
             'is_internal_note' => false,
             'is_read' => true,
             'created_at' => Carbon::now()->subMinutes(40),
+        ]);
+
+        // Conversation 6: Group Chat - DevOps Incident Room
+        $c6 = Conversation::create([
+            'type' => 'group',
+            'group_name' => '⚡ DevOps Incident & Core Infra',
+            'group_description' => 'Real-time incident response, Reverb monitoring, and queue worker health.',
+            'is_encrypted' => false,
+            'customer_name' => '⚡ DevOps Incident & Core Infra',
+            'customer_email' => 'devops@fluxdesk.internal',
+            'customer_avatar' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&h=150&fit=crop',
+            'status' => 'open',
+            'priority' => 'high',
+            'assigned_agent_id' => $alex->id,
+            'last_message_at' => Carbon::now()->subMinutes(1),
+        ]);
+
+        $c6->members()->attach([
+            $alex->id => ['is_group_admin' => true],
+            $elena->id => ['is_group_admin' => false],
+            $marcus->id => ['is_group_admin' => false],
+        ]);
+
+        Message::create([
+            'conversation_id' => $c6->id,
+            'sender_type' => 'agent',
+            'sender_id' => $alex->id,
+            'body' => 'Welcome to the core DevOps group! Reverb connection pooling has been enabled across all worker nodes.',
+            'is_internal_note' => false,
+            'is_read' => true,
+            'created_at' => Carbon::now()->subMinutes(10),
+        ]);
+
+        Message::create([
+            'conversation_id' => $c6->id,
+            'sender_type' => 'agent',
+            'sender_id' => $elena->id,
+            'body' => 'Redis queue latency is holding steady at under 15ms. Good work everyone!',
+            'is_internal_note' => false,
+            'is_read' => true,
+            'created_at' => Carbon::now()->subMinutes(1),
+        ]);
+
+        // Conversation 7: Encrypted Chat - Security Audit & Keys (E2EE)
+        $c7 = Conversation::create([
+            'type' => 'direct',
+            'group_name' => '🔒 Security & Key Rotation (E2EE)',
+            'group_description' => 'End-to-End Encrypted channel for rotating production credentials and SSL certificates.',
+            'is_encrypted' => true,
+            'customer_name' => 'Elena Rostova (Encrypted)',
+            'customer_email' => 'elena@fluxdesk.io',
+            'customer_avatar' => 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&h=150&fit=crop&crop=faces',
+            'status' => 'open',
+            'priority' => 'high',
+            'assigned_agent_id' => $elena->id,
+            'last_message_at' => Carbon::now()->subMinutes(5),
+        ]);
+
+        $c7->members()->attach([$alex->id, $elena->id]);
+
+        Message::create([
+            'conversation_id' => $c7->id,
+            'sender_type' => 'agent',
+            'sender_id' => $elena->id,
+            'body' => '🔐 [End-to-End Encrypted] Elena shared: Production Reverb SSL cert rotation completed. Verification Hash: sha256:7f4a9b2c8e1d...',
+            'is_internal_note' => false,
+            'is_read' => true,
+            'created_at' => Carbon::now()->subMinutes(5),
         ]);
     }
 }
