@@ -117,8 +117,10 @@ function quickLogin(user) {
                                         {{ u.name }}
                                     </div>
                                     <div class="text-[10px] text-slate-400 font-mono">
-                                        <span v-if="u.is_admin" class="text-amber-400 font-semibold">[Admin] </span>
-                                        <span>ID: {{ u.member_id }} &bull; Staff</span>
+                                        <span v-if="u.is_customer && (u.is_admin || u.role !== 'customer')" class="text-purple-300 font-bold">[Staff & Customer: Can Create Ticket] </span>
+                                        <span v-else-if="u.is_admin" class="text-amber-400 font-semibold">[Admin] </span>
+                                        <span v-else class="text-rose-400/90 font-semibold">[Staff Only: Cannot Create Ticket] </span>
+                                        <span>ID: {{ u.member_id }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -149,7 +151,7 @@ function quickLogin(user) {
                                         {{ u.name }}
                                     </div>
                                     <div class="text-[10px] text-slate-400 font-mono">
-                                        <span class="text-emerald-400 font-semibold">[Customer] </span>
+                                        <span class="text-emerald-400 font-semibold">[Customer: Can Create Ticket] </span>
                                         <span>ID: {{ u.member_id }}</span>
                                     </div>
                                 </div>

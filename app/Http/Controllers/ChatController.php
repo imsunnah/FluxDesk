@@ -45,6 +45,7 @@ class ChatController extends Controller
         $filter = $request->query('filter', 'all'); // 'all', 'direct', 'groups', 'encrypted', 'unread'
         $search = $request->query('search', '');
         $selectedId = $request->query('conversation_id');
+        $view = $request->query('view', 'tickets'); // 'tickets' | 'chats' | 'members'
 
         $isCustomer = $currentAgent->is_customer;
         $isAdmin = (bool) $currentAgent->is_admin;
@@ -116,30 +117,45 @@ class ChatController extends Controller
 
         $conversations = $query->orderByDesc('last_message_at')->get();
 
-        // Determine active conversation
+        // Determine active conversation based on view (tickets vs chats)
         $activeConversation = null;
         if ($selectedId) {
             $candidate = Conversation::with(['assignedAgent', 'members'])->find($selectedId);
             if ($candidate) {
-                // Verify user has permission to view this conversation
-                if ($isCustomer) {
-                    $isMember = $candidate->customer_email === $currentAgent->email || $candidate->members->contains('id', $currentAgent->id);
-                    if ($isMember) {
+                $isTicketCandidate = ($candidate->type === 'ticket' || !empty($candidate->ticket_number));
+                
+                // Strictly enforce view separation: tickets view only opens tickets, chats view only opens chats
+                if ($view === 'tickets' && !$isTicketCandidate) {
+                    $candidate = null;
+                } elseif ($view === 'chats' && $isTicketCandidate) {
+                    $candidate = null;
+                }
+
+                if ($candidate) {
+                    // Verify user has permission to view this conversation
+                    if ($isCustomer) {
+                        $isMember = $candidate->customer_email === $currentAgent->email || $candidate->members->contains('id', $currentAgent->id);
+                        if ($isMember) {
+                            $activeConversation = $candidate;
+                        }
+                    } elseif (!$isAdmin && $candidate->type === 'ticket') {
+                        // Staff can only see if assigned to them or unassigned
+                        if (is_null($candidate->assigned_agent_id) || $candidate->assigned_agent_id === $currentAgent->id) {
+                            $activeConversation = $candidate;
+                        }
+                    } else {
                         $activeConversation = $candidate;
                     }
-                } elseif (!$isAdmin && $candidate->type === 'ticket') {
-                    // Staff can only see if assigned to them or unassigned
-                    if (is_null($candidate->assigned_agent_id) || $candidate->assigned_agent_id === $currentAgent->id) {
-                        $activeConversation = $candidate;
-                    }
-                } else {
-                    $activeConversation = $candidate;
                 }
             }
         }
 
         if (!$activeConversation && $conversations->isNotEmpty()) {
-            $activeConversation = $conversations->first();
+            if ($view === 'tickets') {
+                $activeConversation = $conversations->first(fn($c) => $c->type === 'ticket' || !empty($c->ticket_number));
+            } elseif ($view === 'chats') {
+                $activeConversation = $conversations->first(fn($c) => $c->type !== 'ticket' && empty($c->ticket_number));
+            }
         }
 
         // Load messages for active conversation
@@ -187,11 +203,11 @@ class ChatController extends Controller
             }
 
             $allMembers = User::whereIn('id', $assignedStaffIds)
-                ->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'assigned_agent_id')
+                ->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_customer', 'assigned_agent_id')
                 ->get();
         } else {
             // Staff / Admin can see staff and customers
-            $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'assigned_agent_id')
+            $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_customer', 'assigned_agent_id')
                 ->with('assignedAgent:id,name,member_id')
                 ->orderBy('is_admin', 'desc')
                 ->orderBy('role', 'asc')
@@ -201,8 +217,8 @@ class ChatController extends Controller
         // All staff agents for ticket assignment dropdown
         $staffAgents = User::where(function ($q) {
             $q->where('is_admin', true)
-              ->orWhereIn('role', ['admin', 'agent', 'staff', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
-        })->select('id', 'member_id', 'name', 'email', 'avatar', 'role')->get();
+              ->orWhereIn('role', ['admin', 'agent', 'staff', 'both', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
+        })->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_customer')->get();
 
         return Inertia::render('Chat/Index', [
             'conversations' => $conversations,
@@ -212,9 +228,11 @@ class ChatController extends Controller
             'agents' => $allMembers,
             'staffAgents' => $staffAgents,
             'currentAgent' => $currentAgent,
+            'initialView' => $view,
             'filters' => [
                 'filter' => $filter,
                 'search' => $search,
+                'view' => $view,
             ],
             'reverb' => [
                 'key' => config('reverb.apps.apps.0.key', env('VITE_REVERB_APP_KEY')),
@@ -295,7 +313,7 @@ class ChatController extends Controller
                 broadcast(new ConversationUpdated($existing));
             }
 
-            return redirect()->route('chat.index', ['conversation_id' => $existing->id]);
+            return redirect()->route('chat.index', ['conversation_id' => $existing->id, 'view' => 'chats']);
         }
 
         // Create new direct conversation if none exists
@@ -335,7 +353,7 @@ class ChatController extends Controller
             broadcast(new MessageSent($msg));
         }
 
-        return redirect()->route('chat.index', ['conversation_id' => $conversation->id]);
+        return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'chats']);
     }
 
     /**
@@ -400,7 +418,7 @@ class ChatController extends Controller
 
         broadcast(new MessageSent($msg));
 
-        return redirect()->route('chat.index', ['conversation_id' => $conversation->id]);
+        return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'chats']);
     }
 
     /**
@@ -413,6 +431,7 @@ class ChatController extends Controller
             'name' => 'required|string|max:100',
             'email' => 'required|email|max:150|unique:users,email',
             'role' => 'nullable|string|max:100',
+            'is_customer' => 'nullable|boolean',
             'assigned_agent_id' => 'nullable|exists:users,id',
             'password' => 'nullable|string|min:6',
             'is_admin' => 'boolean',
@@ -429,7 +448,8 @@ class ChatController extends Controller
         ];
 
         $role = $validated['role'] ?? 'agent';
-        $prefix = ($role === 'customer') ? 'CUST-' : 'EMP-';
+        $isCustomer = (bool) ($validated['is_customer'] ?? ($role === 'customer'));
+        $prefix = $isCustomer ? 'CUST-' : 'EMP-';
         $memberId = !empty($validated['member_id']) 
             ? $validated['member_id'] 
             : $prefix . str_pad((string)(User::count() + 101), 3, '0', STR_PAD_LEFT);
@@ -442,6 +462,7 @@ class ChatController extends Controller
             'avatar' => $avatarPool[array_rand($avatarPool)],
             'role' => $role,
             'is_admin' => (bool) ($validated['is_admin'] ?? false),
+            'is_customer' => $isCustomer,
             'assigned_agent_id' => $validated['assigned_agent_id'] ?? null,
         ]);
 
@@ -480,6 +501,22 @@ class ChatController extends Controller
         ]);
 
         $user->update(['assigned_agent_id' => $validated['assigned_agent_id']]);
+
+        return redirect()->back();
+    }
+
+    /**
+     * Admin: Toggle customer ticket-creation access on any user.
+     */
+    public function toggleCustomerAccess(User $user)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can toggle customer access.');
+        }
+
+        $user->is_customer = !$user->is_customer;
+        $user->save();
 
         return redirect()->back();
     }
@@ -592,6 +629,12 @@ class ChatController extends Controller
     {
         $currentUser = Auth::user();
 
+        // ONLY CUSTOMER CAN CREATE TICKET. Staff/user without customer role CANNOT.
+        // If login person is user and customer both, he can. Else not!
+        if (!$currentUser || !$currentUser->is_customer) {
+            abort(403, 'Only customers (or accounts with customer access) can create tickets.');
+        }
+
         $validated = $request->validate([
             'subject' => 'required|string|max:150',
             'customer_name' => 'nullable|string|max:100',
@@ -603,18 +646,11 @@ class ChatController extends Controller
 
         $ticketNumber = 'TK-' . rand(1000, 9999);
 
-        if ($currentUser && $currentUser->is_customer) {
-            $customerName = $currentUser->name;
-            $customerEmail = $currentUser->email;
-            $customerAvatar = $currentUser->avatar;
-            // Customer's ticket automatically assigns their designated agent if configured
-            $assignedAgentId = $validated['assigned_agent_id'] ?? $currentUser->assigned_agent_id;
-        } else {
-            $customerName = $validated['customer_name'] ?? ($currentUser?->name ?? 'Customer');
-            $customerEmail = $validated['customer_email'] ?? ($currentUser?->email ?? 'customer@example.com');
-            $customerAvatar = $currentUser?->avatar ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop';
-            $assignedAgentId = $validated['assigned_agent_id'] ?? null;
-        }
+        $customerName = $currentUser->name;
+        $customerEmail = $currentUser->email;
+        $customerAvatar = $currentUser->avatar;
+        // Customer's ticket automatically assigns their designated agent if configured
+        $assignedAgentId = $validated['assigned_agent_id'] ?? $currentUser->assigned_agent_id;
 
         $conversation = Conversation::create([
             'type' => 'ticket',

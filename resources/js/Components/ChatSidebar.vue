@@ -46,6 +46,10 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    activeView: {
+        type: String,
+        default: 'tickets',
+    },
     initialView: {
         type: String,
         default: 'tickets',
@@ -57,14 +61,31 @@ const emit = defineEmits([
     'update:searchQuery', 
     'set-filter', 
     'open-new-chat-modal',
-    'start-direct-chat-with-user'
+    'start-direct-chat-with-user',
+    'change-view',
+    'update:activeView',
 ]);
 
-const isCustomer = computed(() => props.currentAgent?.is_customer);
-const isAdmin = computed(() => props.currentAgent?.is_admin);
+const isCustomer = computed(() => !!props.currentAgent?.is_customer);
+const isStaff = computed(() => !!props.currentAgent?.is_staff);
+const isDualRole = computed(() => isStaff.value && isCustomer.value);
+const canCreateTicket = computed(() => isCustomer.value);
+const isAdmin = computed(() => !!props.currentAgent?.is_admin);
+
+function toggleCustomerAccess(user) {
+    router.post(`/users/${user.id}/toggle-customer-access`, {}, {
+        preserveScroll: true,
+        preserveState: true,
+    });
+}
 
 // Main navigation: 'tickets' | 'chats' | 'members'
-const mainView = ref(props.initialView || 'tickets');
+const mainView = computed(() => props.activeView || props.initialView || 'tickets');
+
+function switchView(tab) {
+    emit('update:activeView', tab);
+    emit('change-view', tab);
+}
 
 const filterTabs = [
     { key: 'all', label: 'All' },
@@ -196,9 +217,10 @@ function statusBadge(status) {
                 <div>
                     <div class="flex items-center space-x-1">
                         <span class="font-bold text-slate-100 text-xs">FluxDesk</span>
-                        <span v-if="currentAgent?.is_admin" class="px-1 text-[9px] bg-amber-500/20 text-amber-400 rounded font-bold">Admin</span>
+                        <span v-if="isDualRole" class="px-1 text-[9px] bg-purple-500/20 text-purple-300 rounded font-bold">Staff + Customer</span>
+                        <span v-else-if="isAdmin" class="px-1 text-[9px] bg-amber-500/20 text-amber-400 rounded font-bold">Admin</span>
                         <span v-else-if="isCustomer" class="px-1 text-[9px] bg-emerald-500/20 text-emerald-400 rounded font-bold">Customer</span>
-                        <span v-else class="px-1 text-[9px] bg-sky-500/20 text-sky-400 rounded font-bold">Staff</span>
+                        <span v-else class="px-1 text-[9px] bg-sky-500/20 text-sky-400 rounded font-bold">Staff (User)</span>
                     </div>
                     <p class="text-[10px] text-slate-400 truncate max-w-[130px]">
                         {{ currentAgent?.name }} ({{ currentAgent?.member_id || 'ID' }})
@@ -208,7 +230,9 @@ function statusBadge(status) {
 
             <!-- Header Actions -->
             <div class="flex items-center space-x-1">
+                <!-- Only customer or user with customer access can create tickets -->
                 <button
+                    v-if="canCreateTicket"
                     @click="$emit('open-new-chat-modal', 'ticket')"
                     class="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center space-x-1 shadow transition-all"
                     title="Create Ticket"
@@ -230,7 +254,7 @@ function statusBadge(status) {
         <!-- Role-Aware Navigation Tabs -->
         <div :class="['grid p-1 mx-2.5 mt-2 bg-slate-950 rounded-xl border border-slate-800 text-xs font-semibold', isCustomer ? 'grid-cols-2' : 'grid-cols-3']">
             <button
-                @click="mainView = 'tickets'"
+                @click="switchView('tickets')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
                     mainView === 'tickets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
@@ -241,7 +265,7 @@ function statusBadge(status) {
             </button>
 
             <button
-                @click="mainView = 'chats'"
+                @click="switchView('chats')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
                     mainView === 'chats' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
@@ -253,7 +277,7 @@ function statusBadge(status) {
 
             <button
                 v-if="!isCustomer"
-                @click="mainView = 'members'"
+                @click="switchView('members')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
                     mainView === 'members' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
@@ -313,11 +337,15 @@ function statusBadge(status) {
                     <Ticket class="w-7 h-7 text-slate-600 mb-2" />
                     <p class="text-xs font-semibold text-slate-400">No tickets found</p>
                     <button 
+                        v-if="canCreateTicket"
                         @click="$emit('open-new-chat-modal', 'ticket')"
                         class="mt-2 text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
                     >
                         + Create a ticket
                     </button>
+                    <p v-else class="text-[11px] text-slate-500 mt-1">
+                        Only customers can create tickets
+                    </p>
                 </div>
 
                 <!-- Unassigned Tickets Pool (For Staff / Admins) -->
@@ -330,7 +358,7 @@ function statusBadge(status) {
                     <div
                         v-for="ticket in unassignedTickets"
                         :key="ticket.id"
-                        @click="$emit('select-conversation', ticket.id)"
+                        @click="$emit('select-conversation', ticket.id, 'tickets')"
                         :class="[
                             'group p-2.5 rounded-xl cursor-pointer transition-all border relative',
                             activeConversationId === ticket.id
@@ -377,7 +405,7 @@ function statusBadge(status) {
                     <div
                         v-for="ticket in (isCustomer ? ticketsList : assignedTickets)"
                         :key="ticket.id"
-                        @click="$emit('select-conversation', ticket.id)"
+                        @click="$emit('select-conversation', ticket.id, 'tickets')"
                         :class="[
                             'group p-2.5 rounded-xl cursor-pointer transition-all border',
                             activeConversationId === ticket.id
@@ -448,7 +476,7 @@ function statusBadge(status) {
                 <div
                     v-for="conv in regularChatsList"
                     :key="conv.id"
-                    @click="$emit('select-conversation', conv.id)"
+                    @click="$emit('select-conversation', conv.id, 'chats')"
                     :class="[
                         'group p-2.5 rounded-xl cursor-pointer transition-all flex items-center space-x-2.5 border',
                         activeConversationId === conv.id
@@ -512,6 +540,7 @@ function statusBadge(status) {
                                 <div class="text-xs font-bold text-slate-200 truncate flex items-center space-x-1">
                                     <span>{{ user.name }}</span>
                                     <span v-if="user.is_admin" class="text-[9px] px-1 bg-amber-500/20 text-amber-400 rounded">Admin</span>
+                                    <span v-if="user.is_customer" class="text-[9px] px-1 bg-purple-500/20 text-purple-300 rounded font-bold" title="Dual Role: Can create tickets">Customer Access</span>
                                 </div>
                                 <div class="text-[10px] text-slate-400 font-mono truncate">
                                     {{ user.member_id || 'ID: ' + user.id }} &bull; Staff
@@ -520,6 +549,21 @@ function statusBadge(status) {
                         </div>
 
                         <div class="flex items-center space-x-1 shrink-0 ml-2">
+                            <!-- Admin can toggle customer access (Dual role) -->
+                            <button
+                                v-if="isAdmin"
+                                @click="toggleCustomerAccess(user)"
+                                :class="[
+                                    'px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-all',
+                                    user.is_customer 
+                                        ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30' 
+                                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                ]"
+                                :title="user.is_customer ? 'Dual Role: Can create tickets. Click to remove.' : 'Staff only: Cannot create tickets. Click to grant customer ticket capability.'"
+                            >
+                                {{ user.is_customer ? 'Ticket: YES' : 'Ticket: NO' }}
+                            </button>
+
                             <button
                                 @click="startChatWith(user)"
                                 class="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold flex items-center space-x-0.5"
@@ -612,11 +656,15 @@ function statusBadge(status) {
                 <span class="text-[11px] text-slate-300">Live Reverb</span>
             </div>
             <button
+                v-if="canCreateTicket"
                 @click="$emit('open-new-chat-modal', 'ticket')"
                 class="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
             >
                 + Create Ticket
             </button>
+            <span v-else class="text-[11px] text-slate-500 font-medium">
+                Staff Workspace
+            </span>
         </div>
     </aside>
 </template>

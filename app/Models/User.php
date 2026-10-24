@@ -20,6 +20,7 @@ class User extends Authenticatable
         'avatar',
         'role',
         'is_admin',
+        'is_customer',
         'assigned_agent_id',
     ];
 
@@ -34,20 +35,31 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
+            'is_customer' => 'boolean',
             'assigned_agent_id' => 'integer',
         ];
     }
 
-    protected $appends = ['is_customer', 'is_staff'];
+    protected $appends = ['is_customer', 'is_staff', 'can_create_ticket', 'is_dual_role'];
 
     public function getIsCustomerAttribute(): bool
     {
-        return $this->role === 'customer';
+        return (bool) ($this->attributes['is_customer'] ?? ($this->role === 'customer'));
     }
 
     public function getIsStaffAttribute(): bool
     {
-        return $this->is_admin || in_array($this->role, ['admin', 'agent', 'staff', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
+        return $this->is_admin || in_array($this->role, ['admin', 'agent', 'staff', 'both', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
+    }
+
+    public function getCanCreateTicketAttribute(): bool
+    {
+        return $this->is_customer;
+    }
+
+    public function getIsDualRoleAttribute(): bool
+    {
+        return $this->is_staff && $this->is_customer;
     }
 
     public function assignedAgent(): \Illuminate\Database\Eloquent\Relations\BelongsTo

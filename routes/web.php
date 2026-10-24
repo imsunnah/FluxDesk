@@ -30,6 +30,7 @@ Route::post('/conversations/{conversation}/simulate-customer', [ChatController::
 Route::post('/members', [ChatController::class, 'addMember'])->name('chat.members.store');
 Route::delete('/members/{user}', [ChatController::class, 'deleteMember'])->name('chat.members.delete');
 Route::post('/users/{user}/assign-agent', [ChatController::class, 'assignCustomerAgent'])->name('chat.users.assign-agent');
+Route::post('/users/{user}/toggle-customer-access', [ChatController::class, 'toggleCustomerAccess'])->name('chat.users.toggle-customer-access');
 Route::post('/conversations/{conversation}/members', [ChatController::class, 'joinConversationMember'])->name('chat.conversation.members.join');
 Route::post('/conversations/{conversation}/members/{user}/admin', [ChatController::class, 'makeGroupAdmin'])->name('chat.conversation.members.make-admin');
 Route::delete('/conversations/{conversation}/members/{user}', [ChatController::class, 'removeGroupMember'])->name('chat.conversation.members.remove');

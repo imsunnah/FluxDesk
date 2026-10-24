@@ -21,11 +21,12 @@ class DatabaseSeeder extends Seeder
             ['email' => 'alex@fluxdesk.io'],
             [
                 'member_id' => 'ADM-001',
-                'name' => 'Alex Rivera (Admin)',
+                'name' => 'Alex Rivera (Admin & Customer)',
                 'password' => bcrypt('password123'),
                 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'admin',
                 'is_admin' => true,
+                'is_customer' => true, // Dual access: can work as staff and can create tickets!
             ]
         );
 
@@ -38,6 +39,7 @@ class DatabaseSeeder extends Seeder
                 'avatar' => 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'agent',
                 'is_admin' => false,
+                'is_customer' => false, // Pure staff: CANNOT create tickets!
             ]
         );
 
@@ -50,6 +52,7 @@ class DatabaseSeeder extends Seeder
                 'avatar' => 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'agent',
                 'is_admin' => false,
+                'is_customer' => false, // Pure staff: CANNOT create tickets!
             ]
         );
 
@@ -63,6 +66,7 @@ class DatabaseSeeder extends Seeder
                 'avatar' => 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'customer',
                 'is_admin' => false,
+                'is_customer' => true, // Customer: CAN create tickets!
                 'assigned_agent_id' => $alex->id,
             ]
         );
@@ -76,6 +80,7 @@ class DatabaseSeeder extends Seeder
                 'avatar' => 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'customer',
                 'is_admin' => false,
+                'is_customer' => true, // Customer: CAN create tickets!
                 'assigned_agent_id' => $elena->id,
             ]
         );
@@ -89,6 +94,7 @@ class DatabaseSeeder extends Seeder
                 'avatar' => 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&h=150&fit=crop&crop=faces',
                 'role' => 'customer',
                 'is_admin' => false,
+                'is_customer' => true, // Customer: CAN create tickets!
                 'assigned_agent_id' => $marcus->id,
             ]
         );
