@@ -3,6 +3,7 @@
 namespace App\Events;
 
 use App\Models\Conversation;
+use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -23,7 +24,8 @@ class ConversationUpdated implements ShouldBroadcastNow
     public function broadcastOn(): array
     {
         return [
-            new PresenceChannel('chat.' . $this->conversation->id),
+            new Channel('chat.' . $this->conversation->id),
+            new PresenceChannel('chat.presence.' . $this->conversation->id),
         ];
     }
 
@@ -45,6 +47,7 @@ class ConversationUpdated implements ShouldBroadcastNow
                     'name' => $this->conversation->assignedAgent->name,
                     'avatar' => $this->conversation->assignedAgent->avatar,
                 ] : null,
+                'is_encrypted' => $this->conversation->is_encrypted,
                 'last_message_at' => $this->conversation->last_message_at ? $this->conversation->last_message_at->toIso8601String() : null,
             ]
         ];

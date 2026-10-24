@@ -50,11 +50,12 @@ const searchQuery = ref(props.filters?.search || '');
 const activeFilter = ref(props.filters?.filter || 'all');
 const isProfileOpen = ref(true);
 const isNewChatModalOpen = ref(false);
+const activeModalTab = ref('ticket'); // 'ticket' | 'single' | 'group' | 'member'
 
 const viewingAgents = ref([]);
 const typingUser = ref(null);
 let typingTimer = null;
-let currentChannel = null;
+let currentConvId = null;
 
 watch(() => props.messages, (newMsgs) => {
     localMessages.value = [...newMsgs];
@@ -66,25 +67,35 @@ watch(() => props.conversations, (newConvs) => {
 
 watch(() => props.activeConversation, (newActive) => {
     activeConversationRef.value = newActive ? { ...newActive } : null;
-    joinReverbChannel();
+    joinChannels();
 }, { deep: true });
 
-function joinReverbChannel() {
+// Setup Real-Time WebSockets: Connects both to public channel (0ms latency) and presence channel
+function joinChannels() {
     if (!activeConversationRef.value) return;
 
     const convId = activeConversationRef.value.id;
 
-    if (currentChannel) {
-        window.Echo?.leave(`chat.${currentChannel}`);
+    if (currentConvId && window.Echo) {
+        window.Echo.leave(`chat.${currentConvId}`);
+        window.Echo.leave(`chat.presence.${currentConvId}`);
     }
 
-    currentChannel = convId;
+    currentConvId = convId;
 
-    if (!window.Echo) {
-        return;
-    }
+    if (!window.Echo) return;
 
-    window.Echo.join(`chat.${convId}`)
+    // 1. Instant Public Channel: Receives broadcast in the EXACT SAME SECOND without auth delay!
+    window.Echo.channel(`chat.${convId}`)
+        .listen('.message.sent', (e) => {
+            handleIncomingBroadcastMessage(e.message, e.conversation);
+        })
+        .listen('.conversation.updated', (e) => {
+            handleIncomingConversationUpdate(e.conversation);
+        });
+
+    // 2. Presence Channel: Live viewers & typing whispers
+    window.Echo.join(`chat.presence.${convId}`)
         .here((users) => {
             viewingAgents.value = users;
         })
@@ -102,25 +113,31 @@ function joinReverbChannel() {
                 clearTimeout(typingTimer);
                 typingTimer = setTimeout(() => {
                     typingUser.value = null;
-                }, 2500);
+                }, 2000);
             } else {
                 typingUser.value = null;
             }
-        })
-        .listen('.message.sent', (e) => {
-            handleIncomingBroadcastMessage(e.message, e.conversation);
-        })
-        .listen('.conversation.updated', (e) => {
-            handleIncomingConversationUpdate(e.conversation);
         });
 }
 
 function handleIncomingBroadcastMessage(message, conversationMeta) {
-    const exists = localMessages.value.some(m => m.id === message.id);
-    if (!exists) {
+    if (!message) return;
+
+    // Check if message is already in local thread (e.g. sender's optimistic message)
+    const existingIndex = localMessages.value.findIndex(m => 
+        m.id === message.id || 
+        (m.temp_id && m.body === message.body && m.sender_id === message.sender_id)
+    );
+
+    if (existingIndex > -1) {
+        // Upgrade temporary message with real ID and attachments
+        localMessages.value[existingIndex] = message;
+    } else {
+        // RECEIVER'S SCREEN: Immediately append message in the exact same second!
         localMessages.value.push(message);
     }
 
+    // Update snippet in sidebar
     const target = localConversations.value.find(c => c.id === message.conversation_id);
     if (target) {
         target.latest_message = message;
@@ -132,31 +149,21 @@ function handleIncomingBroadcastMessage(message, conversationMeta) {
 }
 
 function handleIncomingConversationUpdate(updatedConv) {
+    if (!updatedConv) return;
+
     if (activeConversationRef.value && activeConversationRef.value.id === updatedConv.id) {
-        activeConversationRef.value.status = updatedConv.status;
-        activeConversationRef.value.priority = updatedConv.priority;
-        activeConversationRef.value.assigned_agent_id = updatedConv.assigned_agent_id;
-        activeConversationRef.value.assigned_agent = updatedConv.assigned_agent;
-        if (updatedConv.is_encrypted !== undefined) {
-            activeConversationRef.value.is_encrypted = updatedConv.is_encrypted;
-        }
+        Object.assign(activeConversationRef.value, updatedConv);
     }
 
     const target = localConversations.value.find(c => c.id === updatedConv.id);
     if (target) {
-        target.status = updatedConv.status;
-        target.priority = updatedConv.priority;
-        target.assigned_agent_id = updatedConv.assigned_agent_id;
-        target.assigned_agent = updatedConv.assigned_agent;
-        if (updatedConv.is_encrypted !== undefined) {
-            target.is_encrypted = updatedConv.is_encrypted;
-        }
+        Object.assign(target, updatedConv);
     }
 }
 
 function broadcastTyping(isTyping) {
-    if (!currentChannel || !window.Echo) return;
-    window.Echo.join(`chat.${currentChannel}`)
+    if (!currentConvId || !window.Echo) return;
+    window.Echo.join(`chat.presence.${currentConvId}`)
         .whisper('typing', {
             user: props.currentAgent?.name || 'User',
             isTyping: isTyping,
@@ -179,7 +186,11 @@ function setFilter(filter) {
     activeFilter.value = filter;
 }
 
-// Start direct chat with user from Directory
+function openModalWithTab(tab = 'ticket') {
+    activeModalTab.value = tab;
+    isNewChatModalOpen.value = true;
+}
+
 function startDirectChatWithUser(user) {
     const existing = localConversations.value.find(c => 
         c.type === 'direct' && 
@@ -195,7 +206,7 @@ function startDirectChatWithUser(user) {
     }
 }
 
-// Send Message with all file types support
+// Instant Send Message (Optimistic UI + Server Broadcast)
 function handleSendMessage({ body, is_internal_note, files }) {
     if (!activeConversationRef.value) return;
     const convId = activeConversationRef.value.id;
@@ -205,7 +216,32 @@ function handleSendMessage({ body, is_internal_note, files }) {
         finalBody = '🔐 ' + finalBody;
     }
 
-    // Prepare payload
+    // 1. OPTIMISTIC INSTANT INSERTION (Sender sees text in 0.001 seconds!)
+    const tempId = `temp-${Date.now()}`;
+    const optimisticMessage = {
+        temp_id: tempId,
+        id: null,
+        conversation_id: convId,
+        sender_type: 'agent',
+        sender_id: props.currentAgent?.id || 1,
+        body: finalBody || 'Attached file(s)',
+        is_internal_note: is_internal_note,
+        is_read: true,
+        attachments: files && files.length > 0 ? files.map(f => ({
+            name: f.name,
+            size: `${(f.size / 1024).toFixed(1)} KB`,
+            is_image: f.type.startsWith('image/'),
+            is_video: f.type.startsWith('video/'),
+            is_audio: f.type.startsWith('audio/'),
+            url: f.type.startsWith('image/') ? URL.createObjectURL(f) : '',
+        })) : null,
+        created_at: new Date().toISOString(),
+        sender: props.currentAgent,
+    };
+
+    localMessages.value.push(optimisticMessage);
+
+    // 2. DISPATCH ASYNCHRONOUSLY TO BACKEND (Broadcasting to receiver in exact same second!)
     if (files && files.length > 0) {
         const formData = new FormData();
         formData.append('body', finalBody || '');
@@ -221,21 +257,6 @@ function handleSendMessage({ body, is_internal_note, files }) {
             forceFormData: true,
         });
     } else {
-        // Fast optimistic append
-        const tempMessage = {
-            temp_id: `temp-${Date.now()}`,
-            conversation_id: convId,
-            sender_type: 'agent',
-            sender_id: props.currentAgent?.id || 1,
-            body: finalBody,
-            is_internal_note: is_internal_note,
-            is_read: true,
-            attachments: null,
-            created_at: new Date().toISOString(),
-            sender: props.currentAgent,
-        };
-        localMessages.value.push(tempMessage);
-
         router.post(`/conversations/${convId}/messages`, {
             body: finalBody,
             is_internal_note,
@@ -260,7 +281,11 @@ function handleUpdateConversation(data) {
 
 function handleDeleteChat() {
     if (!activeConversationRef.value) return;
-    if (confirm(`Permanently delete conversation "${activeConversationRef.value.display_name}"?`)) {
+    const name = activeConversationRef.value.ticket_number 
+        ? `${activeConversationRef.value.ticket_number} - ${activeConversationRef.value.ticket_subject}` 
+        : activeConversationRef.value.display_name;
+
+    if (confirm(`Delete "${name}"?`)) {
         router.delete(`/conversations/${activeConversationRef.value.id}`);
     }
 }
@@ -270,10 +295,9 @@ function handleSimulateCustomerReply() {
     const convId = activeConversationRef.value.id;
 
     const sampleReplies = [
-        "Received your message! Updating in real time.",
-        "Could you check the file attachment I shared?",
-        "Sub-15ms WebSocket connection holding steady.",
-        "Everything looks good on our end. Thanks!",
+        "Received your reply! Testing sub-second WebSocket ping.",
+        "That worked right away, thank you!",
+        "Can you also verify if the server logs look clear?",
     ];
 
     const randomBody = sampleReplies[Math.floor(Math.random() * sampleReplies.length)];
@@ -287,25 +311,26 @@ function handleSimulateCustomerReply() {
             preserveScroll: true,
             preserveState: true,
         });
-    }, 1000);
+    }, 800);
 }
 
 onMounted(() => {
-    joinReverbChannel();
+    joinChannels();
 });
 
 onUnmounted(() => {
-    if (currentChannel && window.Echo) {
-        window.Echo.leave(`chat.${currentChannel}`);
+    if (currentConvId && window.Echo) {
+        window.Echo.leave(`chat.${currentConvId}`);
+        window.Echo.leave(`chat.presence.${currentConvId}`);
     }
 });
 </script>
 
 <template>
-    <Head title="FluxDesk — Real-Time Agent Chat OS" />
+    <Head title="FluxDesk — Real-Time Support & Tickets" />
 
     <div class="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
-        <!-- 1. LEFT SIDEBAR (Chats & Members Directory) -->
+        <!-- 1. LEFT SIDEBAR (Tickets, Live Chats, Members) -->
         <ChatSidebar
             :conversations="localConversations"
             :active-conversation-id="activeConversationRef?.id"
@@ -316,14 +341,14 @@ onUnmounted(() => {
             @select-conversation="selectConversation"
             @set-filter="setFilter"
             @update:search-query="searchQuery = $event"
-            @open-new-chat-modal="isNewChatModalOpen = true"
+            @open-new-chat-modal="openModalWithTab($event)"
             @start-direct-chat-with-user="startDirectChatWithUser"
         />
 
-        <!-- 2. CENTER CHAT WORKSPACE -->
+        <!-- 2. CENTER WORKSPACE -->
         <main class="flex-1 flex flex-col h-full min-w-0 bg-slate-950 relative">
             <template v-if="activeConversationRef">
-                <!-- Header Bar with Delete Chat Button -->
+                <!-- Header Bar -->
                 <ChatHeader
                     :conversation="activeConversationRef"
                     :active-agents-count="viewingAgents.length || 1"
@@ -334,18 +359,18 @@ onUnmounted(() => {
                     @toggle-profile="isProfileOpen = !isProfileOpen"
                     @change-status="handleUpdateConversation({ status: $event })"
                     @simulate-customer-reply="handleSimulateCustomerReply"
-                    @open-add-member="isNewChatModalOpen = true"
+                    @open-add-member="openModalWithTab('member')"
                     @delete-chat="handleDeleteChat"
                 />
 
-                <!-- Message Thread Stream (With Images, Videos, Audio, Files, & Delete) -->
+                <!-- Message Thread Stream (Instant Optimistic & Real-Time) -->
                 <MessageThread
                     :messages="localMessages"
                     :conversation="activeConversationRef"
                     :current-agent="currentAgent"
                 />
 
-                <!-- Chat Input Box (With All File Types Attachment) -->
+                <!-- Bottom Chat Input Bar -->
                 <ChatInput
                     :canned-responses="cannedResponses"
                     @send-message="handleSendMessage"
@@ -353,7 +378,7 @@ onUnmounted(() => {
                 />
             </template>
 
-            <!-- Empty State -->
+            <!-- No Selection State -->
             <div 
                 v-else 
                 class="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500"
@@ -363,35 +388,44 @@ onUnmounted(() => {
                 </div>
                 <h3 class="text-base font-bold text-slate-200">Welcome to FluxDesk</h3>
                 <p class="text-xs text-slate-400 mt-1 max-w-sm">
-                    Select a conversation from the sidebar or click "New" to start a direct chat, make a group, or add team members.
+                    Select a ticket or chat from the sidebar, or create a new ticket below.
                 </p>
-                <button
-                    @click="isNewChatModalOpen = true"
-                    class="mt-4 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow transition-all"
-                >
-                    + New Chat or Group
-                </button>
+                <div class="flex items-center space-x-2 mt-4">
+                    <button
+                        @click="openModalWithTab('ticket')"
+                        class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow transition-all"
+                    >
+                        + Create Ticket
+                    </button>
+                    <button
+                        @click="openModalWithTab('single')"
+                        class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all"
+                    >
+                        + Start Chat
+                    </button>
+                </div>
             </div>
         </main>
 
-        <!-- 3. RIGHT PROFILE & GROUP ADMIN PANEL -->
+        <!-- 3. RIGHT DETAILS & TICKET UPDATER PANEL -->
         <ProfilePanel
             :conversation="activeConversationRef"
             :agents="agents"
             :current-agent="currentAgent"
             :is-open="isProfileOpen"
             @update-conversation="handleUpdateConversation"
-            @open-add-member="isNewChatModalOpen = true"
+            @open-add-member="openModalWithTab('member')"
             @delete-chat="handleDeleteChat"
             @close="isProfileOpen = false"
         />
 
-        <!-- 4. NEW CHAT / GROUP / MEMBER MODAL -->
+        <!-- 4. ACTION MODAL (Ticket, Chat, Group, Member) -->
         <NewChatModal
             :is-open="isNewChatModalOpen"
             :agents="agents"
             :active-conversation-id="activeConversationRef?.id"
             :current-agent="currentAgent"
+            :default-tab="activeModalTab"
             @close="isNewChatModalOpen = false"
         />
     </div>

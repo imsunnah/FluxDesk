@@ -20,6 +20,7 @@ class User extends Authenticatable
         'avatar',
         'role',
         'is_admin',
+        'assigned_agent_id',
     ];
 
     protected $hidden = [
@@ -33,7 +34,30 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_admin' => 'boolean',
+            'assigned_agent_id' => 'integer',
         ];
+    }
+
+    protected $appends = ['is_customer', 'is_staff'];
+
+    public function getIsCustomerAttribute(): bool
+    {
+        return $this->role === 'customer';
+    }
+
+    public function getIsStaffAttribute(): bool
+    {
+        return $this->is_admin || in_array($this->role, ['admin', 'agent', 'staff', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
+    }
+
+    public function assignedAgent(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_agent_id');
+    }
+
+    public function assignedCustomers(): HasMany
+    {
+        return $this->hasMany(User::class, 'assigned_agent_id');
     }
 
     public function assignedConversations(): HasMany

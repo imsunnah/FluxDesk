@@ -35,7 +35,7 @@ class ChatController extends Controller
                     'email' => 'alex@fluxdesk.io',
                     'password' => bcrypt('password123'),
                     'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces',
-                    'role' => 'System Administrator',
+                    'role' => 'admin',
                     'is_admin' => true,
                 ]);
                 Auth::login($currentAgent);
@@ -46,17 +46,51 @@ class ChatController extends Controller
         $search = $request->query('search', '');
         $selectedId = $request->query('conversation_id');
 
+        $isCustomer = $currentAgent->is_customer;
+        $isAdmin = (bool) $currentAgent->is_admin;
+
         $query = Conversation::query()
             ->with(['assignedAgent', 'latestMessage', 'members'])
             ->withCount(['messages as unread_count' => function ($q) {
                 $q->where('is_read', false)->where('sender_type', 'customer');
             }]);
 
+        // 1. Role-based scoping:
+        if ($isCustomer) {
+            // Customer can ONLY see conversations they belong to or created
+            $query->where(function ($q) use ($currentAgent) {
+                $q->where('customer_email', $currentAgent->email)
+                  ->orWhereHas('members', fn($m) => $m->where('users.id', $currentAgent->id));
+            });
+            // Customers never see internal team groups
+            $query->where('type', '!=', 'group');
+        } elseif (!$isAdmin) {
+            // Normal Staff / Agent:
+            // - For tickets: sees tickets assigned to them OR unassigned pool tickets
+            // - Once a ticket is collected by another agent, other agents cannot see it!
+            // - For direct/group chats: sees conversations where they are a member
+            $query->where(function ($q) use ($currentAgent) {
+                $q->where(function ($ticketQ) use ($currentAgent) {
+                    $ticketQ->where('type', 'ticket')
+                            ->where(function ($t) use ($currentAgent) {
+                                $t->where('assigned_agent_id', $currentAgent->id)
+                                  ->orWhereNull('assigned_agent_id');
+                            });
+                })->orWhere(function ($otherQ) use ($currentAgent) {
+                    $otherQ->where('type', '!=', 'ticket')
+                           ->whereHas('members', fn($m) => $m->where('users.id', $currentAgent->id));
+                });
+            });
+        }
+        // Admins can see all tickets and conversations
+
         // Filter tabs logic
         if ($filter === 'direct') {
             $query->where('type', 'direct')->where('is_encrypted', false);
         } elseif ($filter === 'groups') {
-            $query->where('type', 'group');
+            if (!$isCustomer) {
+                $query->where('type', 'group');
+            }
         } elseif ($filter === 'encrypted') {
             $query->where('is_encrypted', true);
         } elseif ($filter === 'unread') {
@@ -72,6 +106,8 @@ class ChatController extends Controller
                 $q->where('customer_name', 'like', "%{$search}%")
                   ->orWhere('group_name', 'like', "%{$search}%")
                   ->orWhere('customer_email', 'like', "%{$search}%")
+                  ->orWhere('ticket_number', 'like', "%{$search}%")
+                  ->orWhere('ticket_subject', 'like', "%{$search}%")
                   ->orWhereHas('messages', function ($sub) use ($search) {
                       $sub->where('body', 'like', "%{$search}%");
                   });
@@ -83,13 +119,30 @@ class ChatController extends Controller
         // Determine active conversation
         $activeConversation = null;
         if ($selectedId) {
-            $activeConversation = Conversation::with(['assignedAgent', 'members'])->find($selectedId);
+            $candidate = Conversation::with(['assignedAgent', 'members'])->find($selectedId);
+            if ($candidate) {
+                // Verify user has permission to view this conversation
+                if ($isCustomer) {
+                    $isMember = $candidate->customer_email === $currentAgent->email || $candidate->members->contains('id', $currentAgent->id);
+                    if ($isMember) {
+                        $activeConversation = $candidate;
+                    }
+                } elseif (!$isAdmin && $candidate->type === 'ticket') {
+                    // Staff can only see if assigned to them or unassigned
+                    if (is_null($candidate->assigned_agent_id) || $candidate->assigned_agent_id === $currentAgent->id) {
+                        $activeConversation = $candidate;
+                    }
+                } else {
+                    $activeConversation = $candidate;
+                }
+            }
         }
+
         if (!$activeConversation && $conversations->isNotEmpty()) {
             $activeConversation = $conversations->first();
         }
 
-        // Load messages for active conversation and mark unread messages as read
+        // Load messages for active conversation
         $activeMessages = [];
         if ($activeConversation) {
             Message::where('conversation_id', $activeConversation->id)
@@ -97,16 +150,59 @@ class ChatController extends Controller
                 ->where('is_read', false)
                 ->update(['is_read' => true]);
 
-            $activeMessages = Message::with(['sender'])
+            $messagesQuery = Message::with(['sender'])
                 ->where('conversation_id', $activeConversation->id)
-                ->orderBy('created_at', 'asc')
-                ->get();
+                ->orderBy('created_at', 'asc');
+
+            // Customers cannot see internal notes!
+            if ($isCustomer) {
+                $messagesQuery->where('is_internal_note', false);
+            }
+
+            $activeMessages = $messagesQuery->get();
         }
 
         $cannedResponses = CannedResponse::orderBy('shortcut', 'asc')->get();
-        $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin')
-            ->orderBy('id', 'asc')
-            ->get();
+
+        // Directory of agents / contacts:
+        // For customer: show ONLY assigned staff user(s) (never show other customers!)
+        if ($isCustomer) {
+            $assignedStaffIds = [];
+            if ($currentAgent->assigned_agent_id) {
+                $assignedStaffIds[] = $currentAgent->assigned_agent_id;
+            }
+            // Also include agents assigned to any customer's tickets
+            $ticketAgentIds = Conversation::where('customer_email', $currentAgent->email)
+                ->whereNotNull('assigned_agent_id')
+                ->pluck('assigned_agent_id')
+                ->toArray();
+            $assignedStaffIds = array_unique(array_merge($assignedStaffIds, $ticketAgentIds));
+
+            if (empty($assignedStaffIds)) {
+                // If not assigned yet, show Admin
+                $adminUser = User::where('is_admin', true)->first();
+                if ($adminUser) {
+                    $assignedStaffIds[] = $adminUser->id;
+                }
+            }
+
+            $allMembers = User::whereIn('id', $assignedStaffIds)
+                ->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'assigned_agent_id')
+                ->get();
+        } else {
+            // Staff / Admin can see staff and customers
+            $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'assigned_agent_id')
+                ->with('assignedAgent:id,name,member_id')
+                ->orderBy('is_admin', 'desc')
+                ->orderBy('role', 'asc')
+                ->get();
+        }
+
+        // All staff agents for ticket assignment dropdown
+        $staffAgents = User::where(function ($q) {
+            $q->where('is_admin', true)
+              ->orWhereIn('role', ['admin', 'agent', 'staff', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
+        })->select('id', 'member_id', 'name', 'email', 'avatar', 'role')->get();
 
         return Inertia::render('Chat/Index', [
             'conversations' => $conversations,
@@ -114,6 +210,7 @@ class ChatController extends Controller
             'messages' => $activeMessages,
             'cannedResponses' => $cannedResponses,
             'agents' => $allMembers,
+            'staffAgents' => $staffAgents,
             'currentAgent' => $currentAgent,
             'filters' => [
                 'filter' => $filter,
@@ -130,6 +227,7 @@ class ChatController extends Controller
 
     /**
      * Start direct 1-on-1 chat with a contact or team member.
+     * Prevents duplicate conversations for the same person!
      */
     public function createDirectChat(Request $request)
     {
@@ -144,8 +242,16 @@ class ChatController extends Controller
         $currentAgent = Auth::user();
         $isEncrypted = (bool) ($validated['is_encrypted'] ?? false);
 
-        if (!empty($validated['target_user_id'])) {
-            $targetUser = User::findOrFail($validated['target_user_id']);
+        $targetUser = !empty($validated['target_user_id']) ? User::find($validated['target_user_id']) : null;
+
+        // Customer can only message staff, never another customer
+        if ($currentAgent->is_customer) {
+            if ($targetUser && $targetUser->is_customer) {
+                return redirect()->back()->withErrors(['error' => 'Customers can only message assigned staff support.']);
+            }
+        }
+
+        if ($targetUser) {
             $customerName = $targetUser->name;
             $customerEmail = $targetUser->email;
             $avatar = $targetUser->avatar;
@@ -155,6 +261,44 @@ class ChatController extends Controller
             $avatar = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop';
         }
 
+        // PREVENT DUPLICATES: Check if a direct conversation already exists between these 2 users
+        $existing = null;
+        if ($targetUser) {
+            $existing = Conversation::where('type', 'direct')
+                ->whereHas('members', fn($q) => $q->where('users.id', $currentAgent->id))
+                ->whereHas('members', fn($q) => $q->where('users.id', $targetUser->id))
+                ->first();
+        } else {
+            $existing = Conversation::where('type', 'direct')
+                ->where('customer_email', $customerEmail)
+                ->whereHas('members', fn($q) => $q->where('users.id', $currentAgent->id))
+                ->first();
+        }
+
+        if ($existing) {
+            if (!empty($validated['initial_message'])) {
+                $body = $isEncrypted 
+                    ? '🔐 [Encrypted Message] ' . $validated['initial_message'] 
+                    : $validated['initial_message'];
+
+                $msg = Message::create([
+                    'conversation_id' => $existing->id,
+                    'sender_type' => $currentAgent->is_customer ? 'customer' : 'agent',
+                    'sender_id' => $currentAgent->id,
+                    'body' => $body,
+                    'is_internal_note' => false,
+                    'is_read' => true,
+                ]);
+
+                $existing->update(['last_message_at' => now()]);
+                broadcast(new MessageSent($msg));
+                broadcast(new ConversationUpdated($existing));
+            }
+
+            return redirect()->route('chat.index', ['conversation_id' => $existing->id]);
+        }
+
+        // Create new direct conversation if none exists
         $conversation = Conversation::create([
             'type' => 'direct',
             'customer_name' => $customerName,
@@ -181,24 +325,29 @@ class ChatController extends Controller
 
             $msg = Message::create([
                 'conversation_id' => $conversation->id,
-                'sender_type' => 'agent',
+                'sender_type' => $currentAgent->is_customer ? 'customer' : 'agent',
                 'sender_id' => $currentAgent?->id,
                 'body' => $body,
                 'is_internal_note' => false,
                 'is_read' => true,
             ]);
 
-            broadcast(new MessageSent($msg))->toOthers();
+            broadcast(new MessageSent($msg));
         }
 
         return redirect()->route('chat.index', ['conversation_id' => $conversation->id]);
     }
 
     /**
-     * Create a new group chat.
+     * Create a new group chat (Staff only).
      */
     public function createGroupChat(Request $request)
     {
+        $currentAgent = Auth::user();
+        if ($currentAgent->is_customer) {
+            abort(403, 'Customers cannot create groups.');
+        }
+
         $validated = $request->validate([
             'group_name' => 'required|string|max:100',
             'group_description' => 'nullable|string|max:300',
@@ -207,7 +356,6 @@ class ChatController extends Controller
             'is_encrypted' => 'boolean',
         ]);
 
-        $currentAgent = Auth::user();
         $isEncrypted = (bool) ($validated['is_encrypted'] ?? false);
 
         $conversation = Conversation::create([
@@ -250,13 +398,13 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg))->toOthers();
+        broadcast(new MessageSent($msg));
 
         return redirect()->route('chat.index', ['conversation_id' => $conversation->id]);
     }
 
     /**
-     * Admin: Add new contact person / employee / member with ID into the database.
+     * Admin: Add new contact person / employee / customer into the database.
      */
     public function addMember(Request $request)
     {
@@ -265,6 +413,7 @@ class ChatController extends Controller
             'name' => 'required|string|max:100',
             'email' => 'required|email|max:150|unique:users,email',
             'role' => 'nullable|string|max:100',
+            'assigned_agent_id' => 'nullable|exists:users,id',
             'password' => 'nullable|string|min:6',
             'is_admin' => 'boolean',
             'conversation_id' => 'nullable|exists:conversations,id',
@@ -279,9 +428,11 @@ class ChatController extends Controller
             'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&h=120&fit=crop',
         ];
 
+        $role = $validated['role'] ?? 'agent';
+        $prefix = ($role === 'customer') ? 'CUST-' : 'EMP-';
         $memberId = !empty($validated['member_id']) 
             ? $validated['member_id'] 
-            : 'EMP-' . str_pad((string)(User::count() + 101), 3, '0', STR_PAD_LEFT);
+            : $prefix . str_pad((string)(User::count() + 101), 3, '0', STR_PAD_LEFT);
 
         $newUser = User::create([
             'member_id' => $memberId,
@@ -289,8 +440,9 @@ class ChatController extends Controller
             'email' => $validated['email'],
             'password' => bcrypt($validated['password'] ?? 'password123'),
             'avatar' => $avatarPool[array_rand($avatarPool)],
-            'role' => $validated['role'] ?? 'Member',
+            'role' => $role,
             'is_admin' => (bool) ($validated['is_admin'] ?? false),
+            'assigned_agent_id' => $validated['assigned_agent_id'] ?? null,
         ]);
 
         if (!empty($validated['conversation_id'])) {
@@ -306,9 +458,28 @@ class ChatController extends Controller
                     'is_internal_note' => false,
                     'is_read' => true,
                 ]);
-                broadcast(new MessageSent($msg))->toOthers();
+                broadcast(new MessageSent($msg));
             }
         }
+
+        return redirect()->back();
+    }
+
+    /**
+     * Admin: Assign / update assigned staff user for a customer.
+     */
+    public function assignCustomerAgent(Request $request, User $user)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can assign staff to customers.');
+        }
+
+        $validated = $request->validate([
+            'assigned_agent_id' => 'nullable|exists:users,id',
+        ]);
+
+        $user->update(['assigned_agent_id' => $validated['assigned_agent_id']]);
 
         return redirect()->back();
     }
@@ -364,8 +535,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg))->toOthers();
-        broadcast(new ConversationUpdated($conversation))->toOthers();
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -386,8 +557,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg))->toOthers();
-        broadcast(new ConversationUpdated($conversation))->toOthers();
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -408,8 +579,159 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg))->toOthers();
-        broadcast(new ConversationUpdated($conversation))->toOthers();
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
+
+        return redirect()->back();
+    }
+
+    /**
+     * Customer or Staff creates a support ticket.
+     */
+    public function createTicket(Request $request)
+    {
+        $currentUser = Auth::user();
+
+        $validated = $request->validate([
+            'subject' => 'required|string|max:150',
+            'customer_name' => 'nullable|string|max:100',
+            'customer_email' => 'nullable|email|max:150',
+            'description' => 'required|string|max:5000',
+            'priority' => 'nullable|in:low,medium,high',
+            'assigned_agent_id' => 'nullable|exists:users,id',
+        ]);
+
+        $ticketNumber = 'TK-' . rand(1000, 9999);
+
+        if ($currentUser && $currentUser->is_customer) {
+            $customerName = $currentUser->name;
+            $customerEmail = $currentUser->email;
+            $customerAvatar = $currentUser->avatar;
+            // Customer's ticket automatically assigns their designated agent if configured
+            $assignedAgentId = $validated['assigned_agent_id'] ?? $currentUser->assigned_agent_id;
+        } else {
+            $customerName = $validated['customer_name'] ?? ($currentUser?->name ?? 'Customer');
+            $customerEmail = $validated['customer_email'] ?? ($currentUser?->email ?? 'customer@example.com');
+            $customerAvatar = $currentUser?->avatar ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop';
+            $assignedAgentId = $validated['assigned_agent_id'] ?? null;
+        }
+
+        $conversation = Conversation::create([
+            'type' => 'ticket',
+            'ticket_number' => $ticketNumber,
+            'ticket_subject' => $validated['subject'],
+            'ticket_description' => $validated['description'],
+            'customer_name' => $customerName,
+            'customer_email' => $customerEmail,
+            'customer_avatar' => $customerAvatar,
+            'status' => 'open',
+            'priority' => $validated['priority'] ?? 'medium',
+            'assigned_agent_id' => $assignedAgentId,
+            'last_message_at' => now(),
+        ]);
+
+        if (!empty($conversation->assigned_agent_id)) {
+            $conversation->members()->attach($conversation->assigned_agent_id, ['is_group_admin' => true]);
+        }
+        if ($currentUser) {
+            $conversation->members()->syncWithoutDetaching([$currentUser->id => ['is_group_admin' => false]]);
+        }
+
+        // Initial ticket message
+        $msg = Message::create([
+            'conversation_id' => $conversation->id,
+            'sender_type' => ($currentUser && !$currentUser->is_customer) ? 'agent' : 'customer',
+            'sender_id' => $currentUser?->id,
+            'body' => $validated['description'],
+            'is_internal_note' => false,
+            'is_read' => true,
+        ]);
+
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
+
+        return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'tickets']);
+    }
+
+    /**
+     * Staff "Collects / Claims" an unassigned ticket.
+     * Once collected, other agents will no longer see this ticket in their queue!
+     */
+    public function claimTicket(Conversation $conversation)
+    {
+        $currentUser = Auth::user();
+        if (!$currentUser || $currentUser->is_customer) {
+            abort(403, 'Only staff members can collect tickets.');
+        }
+
+        $conversation->update([
+            'assigned_agent_id' => $currentUser->id,
+            'status' => 'in_progress',
+            'last_message_at' => now(),
+        ]);
+
+        $conversation->members()->syncWithoutDetaching([$currentUser->id => ['is_group_admin' => true]]);
+
+        $msg = Message::create([
+            'conversation_id' => $conversation->id,
+            'sender_type' => 'agent',
+            'sender_id' => $currentUser->id,
+            'body' => "🙋‍♂️ Ticket collected by {$currentUser->name}.",
+            'is_internal_note' => false,
+            'is_read' => true,
+        ]);
+
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
+
+        return redirect()->back();
+    }
+
+    /**
+     * Assigned Agent or Admin re-assigns / transfers ticket to another agent or back to pool.
+     */
+    public function reassignTicket(Request $request, Conversation $conversation)
+    {
+        $currentUser = Auth::user();
+        if (!$currentUser || $currentUser->is_customer) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $validated = $request->validate([
+            'target_agent_id' => 'nullable|exists:users,id',
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        $newAgent = !empty($validated['target_agent_id']) ? User::find($validated['target_agent_id']) : null;
+        
+        $conversation->assigned_agent_id = $newAgent?->id;
+        $conversation->status = $newAgent ? 'in_progress' : 'open';
+        $conversation->last_message_at = now();
+        $conversation->save();
+
+        if ($newAgent) {
+            $conversation->members()->syncWithoutDetaching([$newAgent->id => ['is_group_admin' => true]]);
+        }
+
+        $body = $newAgent 
+            ? "🔄 Ticket reassigned to {$newAgent->name} by {$currentUser->name}."
+            : "🔄 Ticket returned to unassigned pool by {$currentUser->name}.";
+
+        if (!empty($validated['note'])) {
+            $body .= " Reason/Note: " . $validated['note'];
+        }
+
+        $msg = Message::create([
+            'conversation_id' => $conversation->id,
+            'sender_type' => 'agent',
+            'sender_id' => $currentUser->id,
+            'body' => $body,
+            'is_internal_note' => false,
+            'is_read' => true,
+        ]);
+
+        broadcast(new MessageSent($msg));
+        broadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -426,15 +748,17 @@ class ChatController extends Controller
             'files.*' => 'nullable|file|max:51200', // up to 50MB per file
         ]);
 
-        $currentAgent = Auth::user();
-        $senderType = $validated['sender_type'] ?? 'agent';
-        $senderId = ($senderType === 'agent') ? ($currentAgent?->id ?? 1) : null;
-        $isInternalNote = (bool) ($validated['is_internal_note'] ?? false);
+        $currentUser = Auth::user();
+        $isCustomer = $currentUser?->is_customer;
 
-        if ($isInternalNote) {
-            $senderType = 'agent';
-            $senderId = $currentAgent?->id ?? 1;
+        // Customers cannot send internal notes
+        $isInternalNote = (bool) ($validated['is_internal_note'] ?? false);
+        if ($isCustomer) {
+            $isInternalNote = false;
         }
+
+        $senderType = $isCustomer ? 'customer' : 'agent';
+        $senderId = $currentUser?->id;
 
         $body = $validated['body'] ?? '';
 
@@ -482,7 +806,10 @@ class ChatController extends Controller
         }
         $conversation->save();
 
-        broadcast(new MessageSent($message))->toOthers();
+        // Broadcast to all listeners in the exact same second
+        broadcast(new MessageSent($message));
+        broadcast(new ConversationUpdated($conversation));
+
         ProcessOfflineNotification::dispatch($message);
         AuditLogMessage::dispatch($message);
 
@@ -490,21 +817,35 @@ class ChatController extends Controller
     }
 
     /**
-     * Update conversation metadata (Status, Priority, Assigned Agent, Encryption).
+     * Update conversation metadata (Status, Priority, Assigned Agent, Encryption, Notes).
      */
     public function updateConversation(Request $request, Conversation $conversation)
     {
         $validated = $request->validate([
-            'status' => 'nullable|in:open,pending,resolved',
+            'status' => 'nullable|in:open,in_progress,pending,resolved,closed',
             'priority' => 'nullable|in:low,medium,high',
             'assigned_agent_id' => 'nullable|exists:users,id',
             'is_encrypted' => 'nullable|boolean',
+            'update_note' => 'nullable|string|max:1000',
         ]);
 
-        $conversation->fill(array_filter($validated, fn ($val) => !is_null($val)));
+        $conversation->fill(array_filter($validated, fn ($val, $key) => !is_null($val) && $key !== 'update_note', ARRAY_FILTER_USE_BOTH));
         $conversation->save();
 
-        broadcast(new ConversationUpdated($conversation))->toOthers();
+        if (!empty($validated['update_note'])) {
+            $current = Auth::user();
+            $msg = Message::create([
+                'conversation_id' => $conversation->id,
+                'sender_type' => 'agent',
+                'sender_id' => $current?->id,
+                'body' => '📝 Update: ' . $validated['update_note'],
+                'is_internal_note' => false,
+                'is_read' => true,
+            ]);
+            broadcast(new MessageSent($msg));
+        }
+
+        broadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -554,7 +895,8 @@ class ChatController extends Controller
         }
         $conversation->save();
 
-        broadcast(new MessageSent($message))->toOthers();
+        broadcast(new MessageSent($message));
+        broadcast(new ConversationUpdated($conversation));
         AuditLogMessage::dispatch($message);
 
         return redirect()->back();

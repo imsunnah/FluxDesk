@@ -14,6 +14,9 @@ class Conversation extends Model
 
     protected $fillable = [
         'type',
+        'ticket_number',
+        'ticket_subject',
+        'ticket_description',
         'group_name',
         'group_description',
         'is_encrypted',
@@ -40,9 +43,15 @@ class Conversation extends Model
 
     public function getDisplayNameAttribute(): string
     {
+        if (!empty($this->ticket_subject)) {
+            $prefix = $this->ticket_number ? "[{$this->ticket_number}] " : '';
+            return $prefix . $this->ticket_subject;
+        }
+
         if ($this->type === 'group' && !empty($this->group_name)) {
             return $this->group_name;
         }
+
         return $this->customer_name ?? 'Conversation';
     }
 

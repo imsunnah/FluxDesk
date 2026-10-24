@@ -2,13 +2,13 @@
 import { ref } from 'vue';
 import { router } from '@inertiajs/vue3';
 import { 
+    Ticket,
     MessageSquare, 
     Users, 
     UserPlus, 
     Lock, 
     X, 
     Check, 
-    ShieldCheck,
     Sparkles
 } from 'lucide-vue-next';
 
@@ -29,12 +29,27 @@ const props = defineProps({
         type: Object,
         default: () => ({}),
     },
+    defaultTab: {
+        type: String,
+        default: 'ticket',
+    },
 });
 
 const emit = defineEmits(['close']);
 
-const activeTab = ref('single'); // 'single' | 'group' | 'member'
+const activeTab = ref(props.defaultTab || 'ticket'); // 'ticket' | 'single' | 'group' | 'member'
 
+// Ticket Form
+const ticketForm = ref({
+    subject: '',
+    customer_name: props.currentAgent?.name || '',
+    customer_email: props.currentAgent?.email || '',
+    description: '',
+    priority: 'medium',
+    assigned_agent_id: '',
+});
+
+// Direct Chat Form
 const directForm = ref({
     name: '',
     email: '',
@@ -42,6 +57,7 @@ const directForm = ref({
     initial_message: '',
 });
 
+// Group Form
 const groupForm = ref({
     group_name: '',
     group_description: '',
@@ -49,6 +65,7 @@ const groupForm = ref({
     is_encrypted: false,
 });
 
+// Member Form
 const memberForm = ref({
     member_id: '',
     name: '',
@@ -60,6 +77,25 @@ const memberForm = ref({
 });
 
 const isSubmitting = ref(false);
+
+function submitTicket() {
+    if (!ticketForm.value.subject || !ticketForm.value.description) return;
+    isSubmitting.value = true;
+    router.post('/tickets', ticketForm.value, {
+        onFinish: () => {
+            isSubmitting.value = false;
+            emit('close');
+            ticketForm.value = {
+                subject: '',
+                customer_name: props.currentAgent?.name || '',
+                customer_email: props.currentAgent?.email || '',
+                description: '',
+                priority: 'medium',
+                assigned_agent_id: '',
+            };
+        },
+    });
+}
 
 function submitDirectChat() {
     if (!directForm.value.name || !directForm.value.email) return;
@@ -130,13 +166,13 @@ function toggleGroupMember(agentId) {
     >
         <div class="w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl overflow-hidden flex flex-col">
             <!-- Modal Header -->
-            <div class="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+            <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
                 <div>
                     <h3 class="text-sm font-bold text-slate-100 flex items-center space-x-2">
                         <Sparkles class="w-4 h-4 text-indigo-400" />
-                        <span>Start Chat or Add Member</span>
+                        <span>Action Menu</span>
                     </h3>
-                    <p class="text-[11px] text-slate-400">Choose action below</p>
+                    <p class="text-[11px] text-slate-400">Create ticket, start chat, or add member</p>
                 </div>
                 <button 
                     @click="$emit('close')"
@@ -146,56 +182,159 @@ function toggleGroupMember(agentId) {
                 </button>
             </div>
 
-            <!-- Tab Switcher -->
-            <div class="grid grid-cols-3 p-1 mx-4 mt-3 bg-slate-950 rounded-xl border border-slate-800 text-xs font-semibold">
+            <!-- 4 Clean Tabs -->
+            <div class="grid grid-cols-4 p-1 mx-3 mt-2.5 bg-slate-950 rounded-xl border border-slate-800 text-[11px] font-semibold">
+                <button
+                    @click="activeTab = 'ticket'"
+                    :class="[
+                        'py-1.5 px-1 rounded-lg flex items-center justify-center space-x-1 transition-all',
+                        activeTab === 'ticket' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                    ]"
+                >
+                    <Ticket class="w-3 h-3" />
+                    <span>Ticket</span>
+                </button>
+
                 <button
                     @click="activeTab = 'single'"
                     :class="[
-                        'py-1.5 px-2 rounded-lg flex items-center justify-center space-x-1 transition-all',
+                        'py-1.5 px-1 rounded-lg flex items-center justify-center space-x-1 transition-all',
                         activeTab === 'single' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
                     ]"
                 >
-                    <MessageSquare class="w-3.5 h-3.5" />
-                    <span>Single Chat</span>
+                    <MessageSquare class="w-3 h-3" />
+                    <span>Chat</span>
                 </button>
 
                 <button
                     @click="activeTab = 'group'"
                     :class="[
-                        'py-1.5 px-2 rounded-lg flex items-center justify-center space-x-1 transition-all',
+                        'py-1.5 px-1 rounded-lg flex items-center justify-center space-x-1 transition-all',
                         activeTab === 'group' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
                     ]"
                 >
-                    <Users class="w-3.5 h-3.5" />
-                    <span>New Group</span>
+                    <Users class="w-3 h-3" />
+                    <span>Group</span>
                 </button>
 
                 <button
                     @click="activeTab = 'member'"
                     :class="[
-                        'py-1.5 px-2 rounded-lg flex items-center justify-center space-x-1 transition-all',
+                        'py-1.5 px-1 rounded-lg flex items-center justify-center space-x-1 transition-all',
                         activeTab === 'member' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
                     ]"
                 >
-                    <UserPlus class="w-3.5 h-3.5" />
-                    <span>Add Member</span>
+                    <UserPlus class="w-3 h-3" />
+                    <span>Member</span>
                 </button>
             </div>
 
-            <!-- TAB 1: SINGLE CHAT -->
+            <!-- TAB 1: CREATE TICKET (Anyone can create, with assign person) -->
             <form 
-                v-if="activeTab === 'single'" 
-                @submit.prevent="submitDirectChat"
-                class="p-4 space-y-3.5 text-xs"
+                v-if="activeTab === 'ticket'" 
+                @submit.prevent="submitTicket"
+                class="p-4 space-y-3 text-xs"
             >
                 <div class="space-y-1">
-                    <label class="font-medium text-slate-300">Name</label>
+                    <label class="font-medium text-slate-300">Ticket Title / Issue</label>
+                    <input 
+                        v-model="ticketForm.subject"
+                        type="text" 
+                        required
+                        placeholder="e.g. Payment Gateway Failure or Server Latency" 
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                    />
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="space-y-1">
+                        <label class="font-medium text-slate-300">Your Name / Requester</label>
+                        <input 
+                            v-model="ticketForm.customer_name"
+                            type="text" 
+                            required
+                            placeholder="Name" 
+                            class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                    </div>
+
+                    <div class="space-y-1">
+                        <label class="font-medium text-slate-300">Your Email</label>
+                        <input 
+                            v-model="ticketForm.customer_email"
+                            type="email" 
+                            required
+                            placeholder="Email address" 
+                            class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        />
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2">
+                    <!-- Priority -->
+                    <div class="space-y-1">
+                        <label class="font-medium text-slate-300">Priority</label>
+                        <select 
+                            v-model="ticketForm.priority"
+                            class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        >
+                            <option value="low">🟢 Low</option>
+                            <option value="medium">🟡 Medium</option>
+                            <option value="high">🔴 High</option>
+                        </select>
+                    </div>
+
+                    <!-- Assign Person -->
+                    <div class="space-y-1">
+                        <label class="font-medium text-slate-300">Assign To (Staff/Agent)</label>
+                        <select 
+                            v-model="ticketForm.assigned_agent_id"
+                            class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        >
+                            <option value="">Leave Unassigned</option>
+                            <option v-for="a in agents" :key="a.id" :value="a.id">
+                                {{ a.name }} ({{ a.member_id || a.role }})
+                            </option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Description -->
+                <div class="space-y-1">
+                    <label class="font-medium text-slate-300">Issue Details / Message</label>
+                    <textarea 
+                        v-model="ticketForm.description"
+                        required
+                        rows="3"
+                        placeholder="Describe the issue or assistance needed..."
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500 resize-none"
+                    ></textarea>
+                </div>
+
+                <button 
+                    type="submit"
+                    :disabled="isSubmitting"
+                    class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow transition-all flex items-center justify-center space-x-1.5"
+                >
+                    <Ticket class="w-3.5 h-3.5" />
+                    <span>Create & Open Ticket</span>
+                </button>
+            </form>
+
+            <!-- TAB 2: SINGLE CHAT -->
+            <form 
+                v-else-if="activeTab === 'single'" 
+                @submit.prevent="submitDirectChat"
+                class="p-4 space-y-3 text-xs"
+            >
+                <div class="space-y-1">
+                    <label class="font-medium text-slate-300">Contact Name</label>
                     <input 
                         v-model="directForm.name"
                         type="text" 
                         required
                         placeholder="Contact or Employee Name" 
-                        class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
                     />
                 </div>
 
@@ -206,7 +345,7 @@ function toggleGroupMember(agentId) {
                         type="email" 
                         required
                         placeholder="email@example.com" 
-                        class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
                     />
                 </div>
 
@@ -215,7 +354,7 @@ function toggleGroupMember(agentId) {
                         <Lock :class="['w-4 h-4', directForm.is_encrypted ? 'text-emerald-400' : 'text-slate-400']" />
                         <div>
                             <div class="font-bold text-slate-200">Encrypted Chat (E2EE)</div>
-                            <div class="text-[10px] text-slate-400">Lock chat with private encryption</div>
+                            <div class="text-[10px] text-slate-400">Lock chat with end-to-end encryption</div>
                         </div>
                     </div>
                     <input 
@@ -231,7 +370,7 @@ function toggleGroupMember(agentId) {
                         v-model="directForm.initial_message"
                         type="text"
                         placeholder="Hello, how can I help you?" 
-                        class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
                     />
                 </div>
 
@@ -244,7 +383,7 @@ function toggleGroupMember(agentId) {
                 </button>
             </form>
 
-            <!-- TAB 2: MAKE GROUP -->
+            <!-- TAB 3: MAKE GROUP -->
             <form 
                 v-else-if="activeTab === 'group'" 
                 @submit.prevent="submitGroupChat"
@@ -257,7 +396,7 @@ function toggleGroupMember(agentId) {
                         type="text" 
                         required
                         placeholder="e.g. Sales Team or Tech Support" 
-                        class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
                     />
                 </div>
 
@@ -267,14 +406,13 @@ function toggleGroupMember(agentId) {
                         v-model="groupForm.group_description"
                         type="text" 
                         placeholder="What is this group for?" 
-                        class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
+                        class="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500"
                     />
                 </div>
 
-                <!-- Select Members -->
                 <div class="space-y-1">
                     <label class="font-medium text-slate-300">Select Members</label>
-                    <div class="max-h-36 overflow-y-auto space-y-1 p-2 bg-slate-950 rounded-xl border border-slate-800">
+                    <div class="max-h-32 overflow-y-auto space-y-1 p-2 bg-slate-950 rounded-xl border border-slate-800">
                         <div 
                             v-for="agent in agents" 
                             :key="agent.id"
@@ -301,7 +439,7 @@ function toggleGroupMember(agentId) {
                     </div>
                 </div>
 
-                <div class="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div class="flex items-center justify-between p-2 rounded-xl bg-slate-950 border border-slate-800">
                     <div class="flex items-center space-x-2">
                         <Lock :class="['w-4 h-4', groupForm.is_encrypted ? 'text-emerald-400' : 'text-slate-400']" />
                         <div>
@@ -319,13 +457,13 @@ function toggleGroupMember(agentId) {
                 <button 
                     type="submit"
                     :disabled="isSubmitting || !groupForm.group_name"
-                    class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow transition-all"
+                    class="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow transition-all"
                 >
                     Create Group
                 </button>
             </form>
 
-            <!-- TAB 3: ADD MEMBER / EMPLOYEE WITH ID -->
+            <!-- TAB 4: ADD MEMBER -->
             <form 
                 v-else-if="activeTab === 'member'" 
                 @submit.prevent="submitNewMember"
@@ -386,15 +524,14 @@ function toggleGroupMember(agentId) {
                     />
                 </div>
 
-                <!-- Admin checkbox -->
                 <div class="flex items-center space-x-2 pt-1">
                     <input 
                         v-model="memberForm.is_admin" 
                         type="checkbox" 
-                        id="is_admin_check"
+                        id="is_admin_check_modal"
                         class="w-4 h-4 text-amber-500 rounded bg-slate-900 border-slate-700 cursor-pointer"
                     />
-                    <label for="is_admin_check" class="text-xs text-amber-300 font-semibold cursor-pointer">
+                    <label for="is_admin_check_modal" class="text-xs text-amber-300 font-semibold cursor-pointer">
                         Make this member a System Administrator
                     </label>
                 </div>
@@ -405,7 +542,7 @@ function toggleGroupMember(agentId) {
                     class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow transition-all flex items-center justify-center space-x-1.5"
                 >
                     <UserPlus class="w-3.5 h-3.5" />
-                    <span>Save Member to Database</span>
+                    <span>Save Member</span>
                 </button>
             </form>
         </div>

@@ -3,6 +3,7 @@
 namespace App\Events;
 
 use App\Models\Message;
+use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -21,30 +22,24 @@ class MessageSent implements ShouldBroadcastNow
     }
 
     /**
-     * Get the channels the event should broadcast on.
+     * Broadcast to both public channel for instantaneous sub-millisecond reception
+     * and presence channel for viewing indicators.
      *
      * @return array<int, \Illuminate\Broadcasting\Channel>
      */
     public function broadcastOn(): array
     {
         return [
-            new PresenceChannel('chat.' . $this->message->conversation_id),
+            new Channel('chat.' . $this->message->conversation_id),
+            new PresenceChannel('chat.presence.' . $this->message->conversation_id),
         ];
     }
 
-    /**
-     * The event's broadcast name.
-     */
     public function broadcastAs(): string
     {
         return 'message.sent';
     }
 
-    /**
-     * Get the data to broadcast.
-     *
-     * @return array<string, mixed>
-     */
     public function broadcastWith(): array
     {
         return [

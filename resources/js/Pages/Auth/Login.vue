@@ -1,13 +1,21 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { Head, useForm, router } from '@inertiajs/vue3';
-import { Lock, Mail, Shield, User, ArrowRight } from 'lucide-vue-next';
+import { Lock, Mail, Shield, User, ArrowRight, UserCheck, Headset } from 'lucide-vue-next';
 
 const props = defineProps({
     demoUsers: {
         type: Array,
         default: () => [],
     },
+});
+
+const staffUsers = computed(() => {
+    return props.demoUsers.filter(u => u.is_admin || u.role !== 'customer');
+});
+
+const customerUsers = computed(() => {
+    return props.demoUsers.filter(u => u.role === 'customer');
 });
 
 const form = useForm({
@@ -29,21 +37,21 @@ function quickLogin(user) {
 
     <div class="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 selection:bg-indigo-500 selection:text-white">
         <!-- Brand -->
-        <div class="mb-6 flex flex-col items-center">
+        <div class="mb-5 flex flex-col items-center">
             <div class="w-12 h-12 rounded-2xl bg-indigo-600 flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-indigo-600/30 mb-2">
                 ⚡
             </div>
             <h1 class="text-xl font-bold text-slate-100">FluxDesk</h1>
-            <p class="text-xs text-slate-400">Real-Time Messaging & Workspace</p>
+            <p class="text-xs text-slate-400">Real-Time Messaging & Ticket Workspace</p>
         </div>
 
-        <div class="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
+        <div class="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-5">
             <div>
                 <h2 class="text-base font-bold text-slate-100">Sign in to your account</h2>
-                <p class="text-xs text-slate-400 mt-0.5">Enter your email and password or use quick sign-in below.</p>
+                <p class="text-xs text-slate-400 mt-0.5">Enter email and password or use 1-click test login below.</p>
             </div>
 
-            <form @submit.prevent="submit" class="space-y-4">
+            <form @submit.prevent="submit" class="space-y-3.5">
                 <div class="space-y-1">
                     <label class="text-xs font-semibold text-slate-300">Email Address</label>
                     <div class="relative flex items-center">
@@ -84,32 +92,72 @@ function quickLogin(user) {
             </form>
 
             <!-- Quick Demo Login Switcher -->
-            <div class="pt-4 border-t border-slate-800 space-y-2">
+            <div class="pt-4 border-t border-slate-800 space-y-3">
                 <div class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    Quick Sign-In (1-Click Switch)
+                    ⚡ 1-Click Fast Switch
                 </div>
-                <div class="space-y-1.5">
-                    <div 
-                        v-for="u in demoUsers" 
-                        :key="u.id"
-                        @click="quickLogin(u)"
-                        class="p-2 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 cursor-pointer flex items-center justify-between transition-colors group"
-                    >
-                        <div class="flex items-center space-x-2.5">
-                            <img :src="u.avatar" class="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800" />
-                            <div>
-                                <div class="text-xs font-bold text-slate-200 group-hover:text-indigo-300">
-                                    {{ u.name }}
-                                </div>
-                                <div class="text-[10px] text-slate-400 font-mono flex items-center space-x-1">
-                                    <span v-if="u.is_admin" class="text-amber-400 font-semibold">[Admin]</span>
-                                    <span>ID: {{ u.member_id || 'EMP-' + u.id }}</span>
+
+                <!-- 1. Staff Section -->
+                <div>
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center space-x-1 mb-1.5">
+                        <Headset class="w-3 h-3" />
+                        <span>Support Staff & Admins</span>
+                    </div>
+                    <div class="space-y-1">
+                        <div 
+                            v-for="u in staffUsers" 
+                            :key="u.id"
+                            @click="quickLogin(u)"
+                            class="p-2 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 cursor-pointer flex items-center justify-between transition-colors group"
+                        >
+                            <div class="flex items-center space-x-2">
+                                <img :src="u.avatar" class="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800" />
+                                <div>
+                                    <div class="text-xs font-bold text-slate-200 group-hover:text-indigo-300">
+                                        {{ u.name }}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400 font-mono">
+                                        <span v-if="u.is_admin" class="text-amber-400 font-semibold">[Admin] </span>
+                                        <span>ID: {{ u.member_id }} &bull; Staff</span>
+                                    </div>
                                 </div>
                             </div>
+                            <span class="text-[10px] text-indigo-400 font-semibold group-hover:underline">
+                                Login &rarr;
+                            </span>
                         </div>
-                        <span class="text-[10px] text-indigo-400 font-semibold group-hover:underline">
-                            Login &rarr;
-                        </span>
+                    </div>
+                </div>
+
+                <!-- 2. Customer Section -->
+                <div>
+                    <div class="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-1 mb-1.5">
+                        <UserCheck class="w-3 h-3" />
+                        <span>Customers (Can create tickets & text assigned agent)</span>
+                    </div>
+                    <div class="space-y-1">
+                        <div 
+                            v-for="u in customerUsers" 
+                            :key="u.id"
+                            @click="quickLogin(u)"
+                            class="p-2 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 cursor-pointer flex items-center justify-between transition-colors group"
+                        >
+                            <div class="flex items-center space-x-2">
+                                <img :src="u.avatar" class="w-7 h-7 rounded-full object-cover ring-1 ring-slate-800" />
+                                <div>
+                                    <div class="text-xs font-bold text-slate-200 group-hover:text-emerald-300">
+                                        {{ u.name }}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400 font-mono">
+                                        <span class="text-emerald-400 font-semibold">[Customer] </span>
+                                        <span>ID: {{ u.member_id }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <span class="text-[10px] text-emerald-400 font-semibold group-hover:underline">
+                                Login &rarr;
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
