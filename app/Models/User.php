@@ -19,8 +19,12 @@ class User extends Authenticatable
         'password',
         'avatar',
         'role',
+        'department',
+        'designation',
         'is_admin',
         'is_customer',
+        'is_team_lead',
+        'project_id',
         'assigned_agent_id',
     ];
 
@@ -36,11 +40,28 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_admin' => 'boolean',
             'is_customer' => 'boolean',
+            'is_team_lead' => 'boolean',
+            'project_id' => 'integer',
             'assigned_agent_id' => 'integer',
         ];
     }
 
     protected $appends = ['is_customer', 'is_staff', 'can_create_ticket', 'is_dual_role'];
+
+    public function project()
+    {
+        return $this->belongsTo(Project::class);
+    }
+
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class, 'client_id');
+    }
+
+    public function assignedTasks(): BelongsToMany
+    {
+        return $this->belongsToMany(Task::class, 'task_user')->withTimestamps();
+    }
 
     public function getIsCustomerAttribute(): bool
     {

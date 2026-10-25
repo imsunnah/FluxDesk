@@ -78,22 +78,22 @@ function claimTicket() {
 function statusBadge(status) {
     switch (status) {
         case 'open':
-            return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+            return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
         case 'in_progress':
-            return 'bg-sky-500/20 text-sky-400 border border-sky-500/30';
+            return 'bg-sky-50 text-sky-700 border border-sky-200';
         case 'pending':
-            return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+            return 'bg-amber-50 text-amber-700 border border-amber-200';
         case 'resolved':
         case 'closed':
-            return 'bg-slate-700/50 text-slate-300 border border-slate-600/30';
+            return 'bg-slate-100 text-slate-700 border border-slate-200';
         default:
-            return 'bg-slate-800 text-slate-400';
+            return 'bg-slate-100 text-slate-600';
     }
 }
 </script>
 
 <template>
-    <header class="h-16 px-4 py-2 border-b border-slate-800 bg-slate-900 flex items-center justify-between z-10 shrink-0 select-none">
+    <header class="h-16 px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between z-10 shrink-0 select-none">
         <!-- ============================================== -->
         <!-- A. TICKET HEADER (ONLY FOR TICKET DESK) -->
         <!-- ============================================== -->
@@ -101,34 +101,34 @@ function statusBadge(status) {
             <div class="flex items-center space-x-3 min-w-0" v-if="conversation">
                 <!-- Ticket ID Pill -->
                 <div class="shrink-0">
-                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg font-mono bg-indigo-500/20 text-indigo-300 text-xs font-bold border border-indigo-500/40 shadow-sm">
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-lg font-mono bg-indigo-50 text-indigo-700 text-xs font-bold border border-indigo-200 shadow-xs">
                         {{ conversation.ticket_number || '#TK-' + conversation.id }}
                     </span>
                 </div>
 
                 <div class="min-w-0">
                     <div class="flex items-center space-x-2">
-                        <h3 class="text-sm font-bold text-slate-100 truncate" :title="title">
+                        <h3 class="text-sm font-bold text-slate-900 truncate" :title="title">
                             {{ title }}
                         </h3>
                         <span :class="['px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider', statusBadge(conversation.status)]">
                             {{ conversation.status }}
                         </span>
-                        <span v-if="conversation.priority" class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700 uppercase">
+                        <span v-if="conversation.priority" class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 uppercase">
                             {{ conversation.priority }}
                         </span>
                     </div>
 
-                    <div class="flex items-center space-x-2 text-xs text-slate-400 mt-0.5">
-                        <span class="text-slate-400 text-[11px]">
-                            Requester: <strong class="text-slate-200">{{ conversation.customer_name }}</strong> 
-                            <span class="text-slate-500 font-mono">({{ conversation.customer_email }})</span>
+                    <div class="flex items-center space-x-2 text-xs text-slate-500 mt-0.5">
+                        <span class="text-slate-500 text-[11px]">
+                            Requester: <strong class="text-slate-800">{{ conversation.customer_name }}</strong> 
+                            <span class="text-slate-400 font-mono">({{ conversation.customer_email }})</span>
                         </span>
-                        <span class="text-slate-600">&bull;</span>
+                        <span class="text-slate-300">&bull;</span>
                         <span class="text-[11px]">
                             Assignee: 
-                            <strong v-if="conversation.assigned_agent" class="text-indigo-300 font-semibold">{{ conversation.assigned_agent.name }}</strong>
-                            <strong v-else class="text-amber-400 font-semibold">⚡ Unassigned Pool</strong>
+                            <strong v-if="conversation.assigned_agent" class="text-indigo-600 font-semibold">{{ conversation.assigned_agent.name }}</strong>
+                            <strong v-else class="text-amber-700 font-semibold">⚡ Unassigned Pool</strong>
                         </span>
                     </div>
                 </div>
@@ -144,7 +144,7 @@ function statusBadge(status) {
                 <button
                     v-if="isUnassigned && !isCustomer"
                     @click="claimTicket"
-                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all"
+                    class="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition-all"
                     title="Claim and collect ticket ownership"
                 >
                     <Handshake class="w-3.5 h-3.5" />
@@ -152,12 +152,12 @@ function statusBadge(status) {
                 </button>
 
                 <!-- Status Dropdown (Staff / Admin) -->
-                <div v-if="!isCustomer" class="flex items-center space-x-1 bg-slate-950 border border-slate-800 rounded-xl px-2 py-1">
-                    <span class="text-[10px] text-slate-400 font-medium">Status:</span>
+                <div v-if="!isCustomer" class="flex items-center space-x-1 bg-slate-50 border border-slate-200 rounded-xl px-2 py-1">
+                    <span class="text-[10px] text-slate-500 font-medium">Status:</span>
                     <select
                         :value="conversation.status"
                         @change="$emit('change-status', $event.target.value)"
-                        class="bg-transparent text-xs text-indigo-300 font-semibold focus:outline-none cursor-pointer capitalize"
+                        class="bg-transparent text-xs text-indigo-700 font-semibold focus:outline-none cursor-pointer capitalize"
                     >
                         <option value="open">Open</option>
                         <option value="in_progress">In Progress</option>
@@ -172,7 +172,7 @@ function statusBadge(status) {
                     @click="$emit('toggle-profile')"
                     :class="[
                         'p-2 rounded-xl border transition-all flex items-center space-x-1 text-xs font-semibold',
-                        isProfileOpen ? 'bg-indigo-600 border-indigo-500 text-white shadow' : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
+                        isProfileOpen ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-xs' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                     ]"
                     title="Ticket Details"
                 >
@@ -191,21 +191,21 @@ function statusBadge(status) {
                     <img 
                         :src="conversation.customer_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop'" 
                         :alt="title" 
-                        class="w-10 h-10 rounded-full object-cover ring-2 ring-indigo-500/30"
+                        class="w-10 h-10 rounded-full object-cover ring-2 ring-indigo-100"
                     />
-                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-slate-900"></span>
+                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"></span>
                 </div>
 
                 <div class="min-w-0">
                     <div class="flex items-center space-x-2">
-                        <h3 class="text-sm font-bold text-slate-100 truncate">
+                        <h3 class="text-sm font-bold text-slate-900 truncate">
                             {{ title }}
                         </h3>
 
                         <!-- Encrypted Pill -->
                         <span 
                             v-if="conversation.is_encrypted" 
-                            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-semibold"
+                            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-semibold"
                             title="End-to-End Encrypted"
                         >
                             <Lock class="w-2.5 h-2.5" />
@@ -215,7 +215,7 @@ function statusBadge(status) {
                         <!-- Group Badge -->
                         <span 
                             v-if="conversation.type === 'group'" 
-                            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 text-[10px] font-semibold"
+                            class="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-semibold"
                         >
                             <Users class="w-2.5 h-2.5" />
                             <span>{{ memberCount }} members</span>
@@ -223,16 +223,16 @@ function statusBadge(status) {
                     </div>
 
                     <!-- Subtitle: Typing indicator or online -->
-                    <div class="flex items-center space-x-2 text-xs text-slate-400 mt-0.5">
-                        <div v-if="typingUser" class="flex items-center space-x-1 text-indigo-400 font-medium">
-                            <span class="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-ping"></span>
+                    <div class="flex items-center space-x-2 text-xs text-slate-500 mt-0.5">
+                        <div v-if="typingUser" class="flex items-center space-x-1 text-indigo-600 font-medium">
+                            <span class="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-ping"></span>
                             <span class="text-[11px]">{{ typingUser }} is typing...</span>
                         </div>
 
-                        <div v-else class="flex items-center space-x-1.5 text-slate-400 text-[11px]">
+                        <div v-else class="flex items-center space-x-1.5 text-slate-500 text-[11px]">
                             <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span v-if="conversation.type === 'group'">Team Collaboration Room</span>
-                            <span v-else class="text-emerald-400 font-medium">Online</span>
+                            <span v-if="conversation.type === 'group'">Team Channel</span>
+                            <span v-else class="text-emerald-600 font-medium">Online</span>
                         </div>
                     </div>
                 </div>
@@ -248,10 +248,10 @@ function statusBadge(status) {
                 <button
                     v-if="conversation.type === 'group' && !isCustomer"
                     @click="$emit('open-add-member')"
-                    class="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-all"
+                    class="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium border border-slate-200 transition-all"
                     title="Add member"
                 >
-                    <UserPlus class="w-3.5 h-3.5 text-indigo-400" />
+                    <UserPlus class="w-3.5 h-3.5 text-indigo-600" />
                     <span class="hidden sm:inline">Add Member</span>
                 </button>
 
@@ -259,7 +259,7 @@ function statusBadge(status) {
                 <button
                     v-if="!isCustomer"
                     @click="$emit('delete-chat')"
-                    class="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                    class="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                     title="Delete Chat"
                 >
                     <Trash2 class="w-4 h-4" />
@@ -270,7 +270,7 @@ function statusBadge(status) {
                     @click="$emit('toggle-profile')"
                     :class="[
                         'p-2 rounded-xl border transition-all text-xs font-semibold flex items-center space-x-1',
-                        isProfileOpen ? 'bg-indigo-600 border-indigo-500 text-white shadow' : 'bg-slate-950 border-slate-800 text-slate-300 hover:bg-slate-800'
+                        isProfileOpen ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-xs' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
                     ]"
                     title="Chat Info"
                 >

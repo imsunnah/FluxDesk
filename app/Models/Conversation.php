@@ -28,18 +28,25 @@ class Conversation extends Model
         'customer_avatar',
         'status',
         'priority',
+        'project_id',
         'assigned_agent_id',
         'last_message_at',
     ];
 
     protected $casts = [
         'is_encrypted' => 'boolean',
+        'project_id' => 'integer',
         'last_message_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
 
     protected $appends = ['display_name'];
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
+    }
 
     public function getDisplayNameAttribute(): string
     {

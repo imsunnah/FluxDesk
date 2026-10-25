@@ -192,37 +192,37 @@ function formatTime(isoString) {
 function statusBadge(status) {
     switch (status) {
         case 'open':
-            return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+            return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
         case 'in_progress':
-            return 'bg-sky-500/20 text-sky-400 border border-sky-500/30';
+            return 'bg-sky-50 text-sky-700 border border-sky-200';
         case 'pending':
-            return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+            return 'bg-amber-50 text-amber-700 border border-amber-200';
         case 'resolved':
         case 'closed':
-            return 'bg-slate-700/50 text-slate-300 border border-slate-600/30';
+            return 'bg-slate-100 text-slate-700 border border-slate-200';
         default:
-            return 'bg-slate-800 text-slate-400';
+            return 'bg-slate-100 text-slate-600';
     }
 }
 </script>
 
 <template>
-    <aside class="w-80 md:w-84 lg:w-88 flex flex-col h-full bg-slate-900 border-r border-slate-800 select-none z-10 shrink-0">
+    <aside class="w-80 md:w-84 lg:w-88 flex flex-col h-full bg-white border-r border-slate-200 select-none z-10 shrink-0">
         <!-- Top Simple Header Bar -->
-        <div class="px-3.5 py-2.5 border-b border-slate-800 flex items-center justify-between bg-slate-900">
+        <div class="px-3.5 py-2.5 border-b border-slate-200 flex items-center justify-between bg-white">
             <div class="flex items-center space-x-2">
-                <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow">
+                <div class="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-sm">
                     ⚡
                 </div>
                 <div>
-                    <div class="flex items-center space-x-1">
-                        <span class="font-bold text-slate-100 text-xs">FluxDesk</span>
-                        <span v-if="isDualRole" class="px-1 text-[9px] bg-purple-500/20 text-purple-300 rounded font-bold">Staff + Customer</span>
-                        <span v-else-if="isAdmin" class="px-1 text-[9px] bg-amber-500/20 text-amber-400 rounded font-bold">Admin</span>
-                        <span v-else-if="isCustomer" class="px-1 text-[9px] bg-emerald-500/20 text-emerald-400 rounded font-bold">Customer</span>
-                        <span v-else class="px-1 text-[9px] bg-sky-500/20 text-sky-400 rounded font-bold">Staff (User)</span>
+                    <div class="flex items-center space-x-1.5">
+                        <span class="font-bold text-slate-900 text-xs">FluxDesk</span>
+                        <span v-if="isDualRole" class="px-1.5 py-0.2 text-[9px] bg-purple-50 text-purple-700 border border-purple-200 rounded font-semibold">Staff + Customer</span>
+                        <span v-else-if="isAdmin" class="px-1.5 py-0.2 text-[9px] bg-amber-50 text-amber-700 border border-amber-200 rounded font-semibold">Admin</span>
+                        <span v-else-if="isCustomer" class="px-1.5 py-0.2 text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-semibold">Customer</span>
+                        <span v-else class="px-1.5 py-0.2 text-[9px] bg-slate-100 text-slate-700 border border-slate-200 rounded font-semibold">Staff</span>
                     </div>
-                    <p class="text-[10px] text-slate-400 truncate max-w-[130px]">
+                    <p class="text-[10px] text-slate-500 truncate max-w-[130px]">
                         {{ currentAgent?.name }} ({{ currentAgent?.member_id || 'ID' }})
                     </p>
                 </div>
@@ -230,11 +230,10 @@ function statusBadge(status) {
 
             <!-- Header Actions -->
             <div class="flex items-center space-x-1">
-                <!-- Only customer or user with customer access can create tickets -->
                 <button
                     v-if="canCreateTicket"
                     @click="$emit('open-new-chat-modal', 'ticket')"
-                    class="px-2 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center space-x-1 shadow transition-all"
+                    class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold flex items-center space-x-1 shadow-xs transition-all"
                     title="Create Ticket"
                 >
                     <Plus class="w-3 h-3" />
@@ -243,7 +242,7 @@ function statusBadge(status) {
 
                 <button 
                     @click="logout"
-                    class="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+                    class="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
                     title="Sign Out"
                 >
                     <LogOut class="w-3.5 h-3.5" />
@@ -252,27 +251,27 @@ function statusBadge(status) {
         </div>
 
         <!-- Role-Aware Navigation Tabs -->
-        <div :class="['grid p-1 mx-2.5 mt-2 bg-slate-950 rounded-xl border border-slate-800 text-xs font-semibold', isCustomer ? 'grid-cols-2' : 'grid-cols-3']">
+        <div :class="['grid p-1 mx-2.5 mt-2 bg-slate-100 rounded-xl border border-slate-200 text-xs font-semibold gap-1', isCustomer ? 'grid-cols-2' : 'grid-cols-3']">
             <button
                 @click="switchView('tickets')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
-                    mainView === 'tickets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                    mainView === 'tickets' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 ]"
             >
                 <Ticket class="w-3.5 h-3.5" />
-                <span>{{ isCustomer ? 'My Tickets' : 'Tickets' }} ({{ ticketsList.length }})</span>
+                <span>{{ isCustomer ? 'Tickets' : 'Tickets' }} ({{ ticketsList.length }})</span>
             </button>
 
             <button
                 @click="switchView('chats')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
-                    mainView === 'chats' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                    mainView === 'chats' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 ]"
             >
                 <MessageSquare class="w-3.5 h-3.5" />
-                <span>{{ isCustomer ? 'Support Chat' : 'Chats' }} ({{ regularChatsList.length }})</span>
+                <span>{{ isCustomer ? 'Live Chat' : 'Chats' }} ({{ regularChatsList.length }})</span>
             </button>
 
             <button
@@ -280,7 +279,7 @@ function statusBadge(status) {
                 @click="switchView('members')"
                 :class="[
                     'py-1.5 rounded-lg flex items-center justify-center space-x-1 transition-all',
-                    mainView === 'members' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+                    mainView === 'members' ? 'bg-white text-indigo-700 shadow-xs font-bold' : 'text-slate-600 hover:text-slate-900'
                 ]"
             >
                 <Users class="w-3.5 h-3.5" />
@@ -291,18 +290,18 @@ function statusBadge(status) {
         <!-- Search Bar -->
         <div class="px-2.5 pt-2 pb-1.5">
             <div class="relative flex items-center">
-                <Search class="w-3.5 h-3.5 text-slate-500 absolute left-3 pointer-events-none" />
+                <Search class="w-3.5 h-3.5 text-slate-400 absolute left-3 pointer-events-none" />
                 <input 
                     type="text"
                     :value="searchQuery"
                     @input="$emit('update:searchQuery', $event.target.value)"
                     :placeholder="mainView === 'tickets' ? 'Search tickets by #ID, subject...' : 'Search chats...'"
-                    class="w-full pl-8 pr-7 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    class="w-full pl-8 pr-7 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 transition-colors"
                 />
                 <button 
                     v-if="searchQuery"
                     @click="$emit('update:searchQuery', '')"
-                    class="absolute right-2 text-xs text-slate-500 hover:text-slate-300"
+                    class="absolute right-2 text-xs text-slate-400 hover:text-slate-600"
                 >
                     ✕
                 </button>
@@ -313,14 +312,14 @@ function statusBadge(status) {
         <template v-if="mainView === 'tickets'">
             <!-- Status Filter -->
             <div class="px-2.5 pb-2">
-                <div class="flex items-center space-x-1 p-0.5 bg-slate-950/70 rounded-lg border border-slate-800 text-[11px] font-medium overflow-x-auto">
+                <div class="flex items-center space-x-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-[11px] font-medium overflow-x-auto">
                     <button
                         v-for="tab in filterTabs"
                         :key="tab.key"
                         @click="$emit('set-filter', tab.key)"
                         :class="[
-                            'px-2 py-0.5 rounded-md transition-all shrink-0 capitalize',
-                            activeFilter === tab.key ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-400 hover:text-slate-200'
+                            'px-2.5 py-0.5 rounded-md transition-all shrink-0 capitalize',
+                            activeFilter === tab.key ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
                         ]"
                     >
                         {{ tab.label }}
@@ -329,30 +328,30 @@ function statusBadge(status) {
             </div>
 
             <!-- Tickets List -->
-            <div class="flex-1 overflow-y-auto px-2 space-y-2">
+            <div class="flex-1 overflow-y-auto px-2 space-y-1.5">
                 <div 
                     v-if="ticketsList.length === 0"
-                    class="flex flex-col items-center justify-center h-48 text-center p-6 text-slate-500"
+                    class="flex flex-col items-center justify-center h-48 text-center p-6 text-slate-400"
                 >
-                    <Ticket class="w-7 h-7 text-slate-600 mb-2" />
-                    <p class="text-xs font-semibold text-slate-400">No tickets found</p>
+                    <Ticket class="w-7 h-7 text-slate-300 mb-2" />
+                    <p class="text-xs font-semibold text-slate-600">No tickets found</p>
                     <button 
                         v-if="canCreateTicket"
                         @click="$emit('open-new-chat-modal', 'ticket')"
-                        class="mt-2 text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
+                        class="mt-2 text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
                     >
                         + Create a ticket
                     </button>
-                    <p v-else class="text-[11px] text-slate-500 mt-1">
+                    <p v-else class="text-[11px] text-slate-400 mt-1">
                         Only customers can create tickets
                     </p>
                 </div>
 
                 <!-- Unassigned Tickets Pool (For Staff / Admins) -->
                 <div v-if="!isCustomer && unassignedTickets.length > 0" class="space-y-1">
-                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center justify-between">
-                        <span>⚡ Available Pool (Click to Collect)</span>
-                        <span class="bg-amber-500/20 px-1.5 py-0.2 rounded">{{ unassignedTickets.length }}</span>
+                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-amber-700 flex items-center justify-between">
+                        <span>⚡ Available Pool</span>
+                        <span class="bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded font-mono">{{ unassignedTickets.length }}</span>
                     </div>
 
                     <div
@@ -362,43 +361,43 @@ function statusBadge(status) {
                         :class="[
                             'group p-2.5 rounded-xl cursor-pointer transition-all border relative',
                             activeConversationId === ticket.id
-                                ? 'bg-amber-950/40 border-amber-500/60 text-slate-100 shadow-sm'
-                                : 'bg-slate-950/80 hover:bg-slate-800/60 border-amber-500/30 text-slate-200'
+                                ? 'bg-amber-100/80 border-amber-400 text-slate-900 shadow-xs'
+                                : 'bg-amber-50/50 hover:bg-amber-100/60 border-amber-200 text-slate-800'
                         ]"
                     >
                         <div class="flex items-center justify-between mb-1">
-                            <span class="font-mono text-xs font-bold text-amber-400">
+                            <span class="font-mono text-xs font-bold text-amber-800">
                                 {{ ticket.ticket_number || '#' + ticket.id }}
                             </span>
                             <div class="flex items-center space-x-1.5">
                                 <button
                                     @click="claimTicket(ticket, $event)"
-                                    class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold shadow flex items-center space-x-1 transition-all"
+                                    class="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold shadow-xs flex items-center space-x-1 transition-all"
                                     title="Collect and claim this ticket"
                                 >
                                     <Handshake class="w-2.5 h-2.5" />
-                                    <span>Collect Ticket</span>
+                                    <span>Collect</span>
                                 </button>
-                                <span class="text-[10px] text-slate-400 font-mono">
+                                <span class="text-[10px] text-slate-500 font-mono">
                                     {{ formatTime(ticket.last_message_at || ticket.updated_at) }}
                                 </span>
                             </div>
                         </div>
 
-                        <h4 class="text-xs font-bold text-slate-100 group-hover:text-amber-300 truncate mb-1">
+                        <h4 class="text-xs font-bold text-slate-900 group-hover:text-amber-800 truncate mb-1">
                             {{ ticket.ticket_subject || ticket.display_name }}
                         </h4>
 
-                        <div class="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/80">
+                        <div class="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-amber-200/60">
                             <span class="truncate max-w-[140px]">From: {{ ticket.customer_name }}</span>
-                            <span class="text-amber-300 font-semibold">Unassigned</span>
+                            <span class="text-amber-700 font-semibold">Unassigned</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- Assigned Tickets List -->
                 <div v-if="assignedTickets.length > 0 || isCustomer" class="space-y-1">
-                    <div v-if="!isCustomer && unassignedTickets.length > 0" class="px-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    <div v-if="!isCustomer && unassignedTickets.length > 0" class="px-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                         <span>{{ isAdmin ? 'All Assigned Tickets' : 'My Assigned Tickets' }}</span>
                     </div>
 
@@ -409,33 +408,33 @@ function statusBadge(status) {
                         :class="[
                             'group p-2.5 rounded-xl cursor-pointer transition-all border',
                             activeConversationId === ticket.id
-                                ? 'bg-indigo-950/60 border-indigo-500/50 text-slate-100 shadow-sm'
-                                : 'hover:bg-slate-800/40 border-slate-800/60 text-slate-300'
+                                ? 'bg-indigo-50 border-indigo-300 text-slate-900 shadow-xs ring-1 ring-indigo-200'
+                                : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-800'
                         ]"
                     >
                         <div class="flex items-center justify-between mb-1">
-                            <span class="font-mono text-xs font-bold text-indigo-400">
+                            <span class="font-mono text-xs font-bold text-indigo-600">
                                 {{ ticket.ticket_number || '#' + ticket.id }}
                             </span>
                             <div class="flex items-center space-x-1">
                                 <span :class="['px-1.5 py-0.2 rounded text-[9px] font-bold uppercase', statusBadge(ticket.status)]">
                                     {{ ticket.status }}
                                 </span>
-                                <span class="text-[10px] text-slate-500 font-mono">
+                                <span class="text-[10px] text-slate-400 font-mono">
                                     {{ formatTime(ticket.last_message_at || ticket.updated_at) }}
                                 </span>
                             </div>
                         </div>
 
-                        <h4 class="text-xs font-bold text-slate-100 group-hover:text-indigo-300 truncate mb-1">
+                        <h4 class="text-xs font-bold text-slate-900 group-hover:text-indigo-600 truncate mb-1">
                             {{ ticket.ticket_subject || ticket.display_name }}
                         </h4>
 
-                        <div class="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/60">
+                        <div class="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-100">
                             <span class="truncate max-w-[130px]">
                                 {{ isCustomer ? 'Assigned: ' + (ticket.assigned_agent?.name || 'Support Pool') : 'From: ' + ticket.customer_name }}
                             </span>
-                            <span v-if="!isCustomer" class="text-indigo-300 font-medium truncate max-w-[120px]">
+                            <span v-if="!isCustomer" class="text-indigo-600 font-medium truncate max-w-[120px]">
                                 {{ ticket.assigned_agent?.name || 'Unassigned' }}
                             </span>
                         </div>
@@ -447,12 +446,12 @@ function statusBadge(status) {
         <!-- 2. LIVE CHATS VIEW -->
         <template v-else-if="mainView === 'chats'">
             <div class="px-2.5 pb-1.5 flex items-center justify-between">
-                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    {{ isCustomer ? 'Support Chats' : 'Direct & Group Chats' }}
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    {{ isCustomer ? 'Support Chats' : 'Chats' }}
                 </span>
                 <button 
                     @click="$emit('open-new-chat-modal', 'single')"
-                    class="text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                    class="text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
                 >
                     + New Chat
                 </button>
@@ -461,13 +460,13 @@ function statusBadge(status) {
             <div class="flex-1 overflow-y-auto px-2 space-y-1">
                 <div 
                     v-if="regularChatsList.length === 0"
-                    class="flex flex-col items-center justify-center h-48 text-center p-6 text-slate-500"
+                    class="flex flex-col items-center justify-center h-48 text-center p-6 text-slate-400"
                 >
-                    <MessageSquare class="w-7 h-7 text-slate-600 mb-2" />
-                    <p class="text-xs font-semibold text-slate-400">No chats yet</p>
+                    <MessageSquare class="w-7 h-7 text-slate-300 mb-2" />
+                    <p class="text-xs font-semibold text-slate-600">No chats yet</p>
                     <button 
                         @click="$emit('open-new-chat-modal', 'single')"
-                        class="mt-2 text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                        class="mt-2 text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
                     >
                         + Start a chat
                     </button>
@@ -480,29 +479,29 @@ function statusBadge(status) {
                     :class="[
                         'group p-2.5 rounded-xl cursor-pointer transition-all flex items-center space-x-2.5 border',
                         activeConversationId === conv.id
-                            ? 'bg-indigo-950/60 border-indigo-500/50 text-slate-100'
-                            : 'hover:bg-slate-800/40 border-transparent text-slate-300'
+                            ? 'bg-indigo-50 border-indigo-300 text-slate-900 shadow-xs'
+                            : 'bg-white hover:bg-slate-50 border-transparent text-slate-700'
                     ]"
                 >
                     <div class="relative shrink-0">
                         <img 
                             :src="conv.customer_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop'" 
-                            class="w-9 h-9 rounded-full object-cover ring-1 ring-slate-800" 
+                            class="w-9 h-9 rounded-full object-cover ring-1 ring-slate-200" 
                         />
-                        <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-slate-900"></span>
+                        <span class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"></span>
                     </div>
 
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center justify-between mb-0.5">
-                            <span class="text-xs font-semibold text-slate-100 truncate group-hover:text-indigo-300">
+                            <span class="text-xs font-semibold text-slate-900 truncate group-hover:text-indigo-600">
                                 {{ conv.display_name }}
                             </span>
-                            <span class="text-[10px] text-slate-500 font-mono shrink-0 ml-1">
+                            <span class="text-[10px] text-slate-400 font-mono shrink-0 ml-1">
                                 {{ formatTime(conv.last_message_at || conv.updated_at) }}
                             </span>
                         </div>
 
-                        <p class="text-[11px] text-slate-400 truncate">
+                        <p class="text-[11px] text-slate-500 truncate">
                             {{ conv.latest_message?.body || 'No messages yet' }}
                         </p>
                     </div>
@@ -513,11 +512,11 @@ function statusBadge(status) {
         <!-- 3. MEMBERS / USERS DIRECTORY (Staff only) -->
         <template v-else>
             <div class="px-2.5 pb-1.5 flex items-center justify-between">
-                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">Users Directory</span>
+                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500">Users Directory</span>
                 <button 
                     v-if="isAdmin"
                     @click="$emit('open-new-chat-modal', 'member')"
-                    class="text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                    class="text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
                 >
                     + Add User
                 </button>
@@ -526,47 +525,46 @@ function statusBadge(status) {
             <div class="flex-1 overflow-y-auto px-2 space-y-3">
                 <!-- Staff Section -->
                 <div class="space-y-1">
-                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-indigo-600">
                         Staff & Support Agents ({{ staffDirectory.length }})
                     </div>
                     <div
                         v-for="user in staffDirectory"
                         :key="user.id"
-                        class="p-2 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between"
+                        class="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between"
                     >
                         <div class="flex items-center space-x-2 min-w-0">
-                            <img :src="user.avatar" class="w-8 h-8 rounded-full object-cover ring-1 ring-slate-800" />
+                            <img :src="user.avatar" class="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200" />
                             <div class="min-w-0">
-                                <div class="text-xs font-bold text-slate-200 truncate flex items-center space-x-1">
+                                <div class="text-xs font-bold text-slate-800 truncate flex items-center space-x-1">
                                     <span>{{ user.name }}</span>
-                                    <span v-if="user.is_admin" class="text-[9px] px-1 bg-amber-500/20 text-amber-400 rounded">Admin</span>
-                                    <span v-if="user.is_customer" class="text-[9px] px-1 bg-purple-500/20 text-purple-300 rounded font-bold" title="Dual Role: Can create tickets">Customer Access</span>
+                                    <span v-if="user.is_admin" class="text-[9px] px-1 bg-amber-100 text-amber-800 border border-amber-200 rounded font-semibold">Admin</span>
+                                    <span v-if="user.is_customer" class="text-[9px] px-1 bg-purple-100 text-purple-700 border border-purple-200 rounded font-semibold">Customer Access</span>
                                 </div>
-                                <div class="text-[10px] text-slate-400 font-mono truncate">
+                                <div class="text-[10px] text-slate-500 font-mono truncate">
                                     {{ user.member_id || 'ID: ' + user.id }} &bull; Staff
                                 </div>
                             </div>
                         </div>
 
                         <div class="flex items-center space-x-1 shrink-0 ml-2">
-                            <!-- Admin can toggle customer access (Dual role) -->
                             <button
                                 v-if="isAdmin"
                                 @click="toggleCustomerAccess(user)"
                                 :class="[
                                     'px-1.5 py-0.5 rounded text-[9px] font-semibold border transition-all',
                                     user.is_customer 
-                                        ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30' 
-                                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                                        ? 'bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100' 
+                                        : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'
                                 ]"
-                                :title="user.is_customer ? 'Dual Role: Can create tickets. Click to remove.' : 'Staff only: Cannot create tickets. Click to grant customer ticket capability.'"
+                                :title="user.is_customer ? 'Dual Role: Can create tickets. Click to remove.' : 'Staff only: Click to grant customer ticket capability.'"
                             >
                                 {{ user.is_customer ? 'Ticket: YES' : 'Ticket: NO' }}
                             </button>
 
                             <button
                                 @click="startChatWith(user)"
-                                class="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold flex items-center space-x-0.5"
+                                class="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-semibold flex items-center space-x-0.5 shadow-xs"
                             >
                                 <MessageSquare class="w-2.5 h-2.5" />
                                 <span>Chat</span>
@@ -575,7 +573,7 @@ function statusBadge(status) {
                             <button
                                 v-if="isAdmin && currentAgent?.id !== user.id"
                                 @click="deleteMember(user)"
-                                class="p-1 rounded text-slate-500 hover:text-rose-400"
+                                class="p-1 rounded text-slate-400 hover:text-rose-600"
                                 title="Delete"
                             >
                                 <Trash2 class="w-3 h-3" />
@@ -586,22 +584,22 @@ function statusBadge(status) {
 
                 <!-- Customers Section -->
                 <div class="space-y-1">
-                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                        Customers & Assigned Staff ({{ customerDirectory.length }})
+                    <div class="px-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+                        Customers ({{ customerDirectory.length }})
                     </div>
                     <div
                         v-for="cust in customerDirectory"
                         :key="cust.id"
-                        class="p-2 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5"
+                        class="p-2 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5"
                     >
                         <div class="flex items-center justify-between">
                             <div class="flex items-center space-x-2 min-w-0">
-                                <img :src="cust.avatar" class="w-8 h-8 rounded-full object-cover ring-1 ring-slate-800" />
+                                <img :src="cust.avatar" class="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200" />
                                 <div class="min-w-0">
-                                    <div class="text-xs font-bold text-slate-200 truncate">
+                                    <div class="text-xs font-bold text-slate-800 truncate">
                                         {{ cust.name }}
                                     </div>
-                                    <div class="text-[10px] text-slate-400 font-mono truncate">
+                                    <div class="text-[10px] text-slate-500 font-mono truncate">
                                         {{ cust.member_id }} &bull; {{ cust.email }}
                                     </div>
                                 </div>
@@ -610,7 +608,7 @@ function statusBadge(status) {
                             <div class="flex items-center space-x-1 shrink-0 ml-2">
                                 <button
                                     @click="startChatWith(cust)"
-                                    class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-semibold flex items-center space-x-0.5"
+                                    class="px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-semibold flex items-center space-x-0.5 shadow-xs"
                                 >
                                     <MessageSquare class="w-2.5 h-2.5" />
                                     <span>Chat</span>
@@ -618,7 +616,7 @@ function statusBadge(status) {
                                 <button
                                     v-if="isAdmin"
                                     @click="deleteMember(cust)"
-                                    class="p-1 rounded text-slate-500 hover:text-rose-400"
+                                    class="p-1 rounded text-slate-400 hover:text-rose-600"
                                     title="Delete"
                                 >
                                     <Trash2 class="w-3 h-3" />
@@ -626,21 +624,21 @@ function statusBadge(status) {
                             </div>
                         </div>
 
-                        <!-- Assigned Staff Selector (Admin can assign or edit) -->
-                        <div class="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-                            <span class="text-slate-400">Assigned Staff:</span>
+                        <!-- Assigned Staff Selector -->
+                        <div class="pt-1.5 border-t border-slate-200 flex items-center justify-between text-[10px]">
+                            <span class="text-slate-500">Assigned Staff:</span>
                             <select
                                 v-if="isAdmin"
                                 :value="cust.assigned_agent_id || ''"
                                 @change="updateCustomerAgent(cust, $event.target.value)"
-                                class="bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 focus:outline-none focus:border-indigo-500"
+                                class="bg-white border border-slate-300 rounded px-1.5 py-0.5 text-[10px] text-indigo-700 focus:outline-none focus:border-indigo-600"
                             >
                                 <option value="">None (Unassigned)</option>
                                 <option v-for="s in staffDirectory" :key="s.id" :value="s.id">
                                     {{ s.name }} ({{ s.member_id }})
                                 </option>
                             </select>
-                            <span v-else class="text-indigo-300 font-medium">
+                            <span v-else class="text-indigo-600 font-medium">
                                 {{ cust.assigned_agent?.name || 'Unassigned' }}
                             </span>
                         </div>
@@ -650,20 +648,20 @@ function statusBadge(status) {
         </template>
 
         <!-- Sidebar Bottom Footer -->
-        <div class="p-2 border-t border-slate-800 bg-slate-950 text-slate-400 text-xs flex items-center justify-between">
+        <div class="p-2.5 border-t border-slate-200 bg-slate-50 text-slate-500 text-xs flex items-center justify-between">
             <div class="flex items-center space-x-1.5">
                 <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                <span class="text-[11px] text-slate-300">Live Reverb</span>
+                <span class="text-[11px] text-slate-600 font-medium">Live Active</span>
             </div>
             <button
                 v-if="canCreateTicket"
                 @click="$emit('open-new-chat-modal', 'ticket')"
-                class="text-[11px] text-indigo-400 hover:text-indigo-300 font-semibold"
+                class="text-[11px] text-indigo-600 hover:text-indigo-700 font-semibold"
             >
                 + Create Ticket
             </button>
-            <span v-else class="text-[11px] text-slate-500 font-medium">
-                Staff Workspace
+            <span v-else class="text-[11px] text-slate-400 font-medium">
+                FluxDesk Agent
             </span>
         </div>
     </aside>

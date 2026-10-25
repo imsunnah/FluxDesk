@@ -2,23 +2,29 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Head, router } from '@inertiajs/vue3';
 import { 
+    CheckSquare,
     Ticket, 
     MessageSquare, 
-    Users, 
     Plus, 
-    Shield, 
-    Handshake, 
-    UserCheck, 
-    Trash2, 
-    Mail, 
-    Clock, 
-    AlertCircle 
+    Users,
+    Search, 
+    LogOut,
+    CheckCircle2,
+    ShieldCheck,
+    UserCheck,
+    Columns,
+    MessageCircle,
+    User,
+    Sparkles,
+    Building2,
+    UserCircle2
 } from 'lucide-vue-next';
-import ChatSidebar from '@/Components/ChatSidebar.vue';
+import WorkStatusDashboard from '@/Components/WorkStatusDashboard.vue';
+import TicketDashboard from '@/Components/TicketDashboard.vue';
+import AdminOverviewDashboard from '@/Components/AdminOverviewDashboard.vue';
 import ChatHeader from '@/Components/ChatHeader.vue';
 import MessageThread from '@/Components/MessageThread.vue';
 import ChatInput from '@/Components/ChatInput.vue';
-import ProfilePanel from '@/Components/ProfilePanel.vue';
 import NewChatModal from '@/Components/NewChatModal.vue';
 
 const props = defineProps({
@@ -31,6 +37,18 @@ const props = defineProps({
         default: null,
     },
     messages: {
+        type: Array,
+        default: () => [],
+    },
+    tasks: {
+        type: Array,
+        default: () => [],
+    },
+    projects: {
+        type: Array,
+        default: () => [],
+    },
+    departments: {
         type: Array,
         default: () => [],
     },
@@ -52,11 +70,11 @@ const props = defineProps({
     },
     initialView: {
         type: String,
-        default: 'tickets',
+        default: 'work_status',
     },
     filters: {
         type: Object,
-        default: () => ({ filter: 'all', search: '', view: 'tickets' }),
+        default: () => ({ filter: 'all', search: '', view: 'work_status' }),
     },
     reverb: {
         type: Object,
@@ -64,51 +82,149 @@ const props = defineProps({
     },
 });
 
-const currentView = ref(props.initialView || props.filters?.view || 'tickets');
+const isCustomer = computed(() => !!props.currentAgent?.is_customer);
+const isAdmin = computed(() => !!props.currentAgent?.is_admin);
+
+// Main modules: 'work_status' | 'tickets' | 'chat' | 'admin'
+const currentTab = ref(
+    props.filters?.view === 'admin' && isAdmin.value ? 'admin' :
+    (props.filters?.view === 'chat' || props.filters?.view === 'chats') ? 'chat' :
+    isCustomer.value || props.filters?.view === 'tickets' ? 'tickets' :
+    'work_status'
+);
+
 const localMessages = ref([...props.messages]);
 const localConversations = ref([...props.conversations]);
 const activeConversationRef = ref(props.activeConversation ? { ...props.activeConversation } : null);
-const searchQuery = ref(props.filters?.search || '');
-const activeFilter = ref(props.filters?.filter || 'all');
-const isProfileOpen = ref(true);
+
 const isNewChatModalOpen = ref(false);
-const activeModalTab = ref('ticket'); // 'ticket' | 'single' | 'group' | 'member'
+const activeModalTab = ref('ticket');
+const chatSearch = ref('');
 
 const viewingAgents = ref([]);
 const typingUser = ref(null);
 let typingTimer = null;
 let currentConvId = null;
 
-const isTicketView = computed(() => currentView.value === 'tickets');
-const isChatView = computed(() => currentView.value === 'chats');
-const isMembersView = computed(() => currentView.value === 'members');
-
-const isCustomer = computed(() => !!props.currentAgent?.is_customer);
-const isAdmin = computed(() => !!props.currentAgent?.is_admin);
-
-const activeIsTicket = computed(() => {
-    return !!activeConversationRef.value && (activeConversationRef.value.type === 'ticket' || !!activeConversationRef.value.ticket_number);
+// Counts
+const openTicketsCount = computed(() => {
+    return localConversations.value.filter(c => c.type === 'ticket' && c.status === 'open').length;
 });
 
-const activeIsChat = computed(() => {
-    return !!activeConversationRef.value && activeConversationRef.value.type !== 'ticket' && !activeConversationRef.value.ticket_number;
+const unreadChatCount = computed(() => {
+    return localConversations.value
+        .filter(c => c.type !== 'ticket')
+        .reduce((sum, c) => sum + (c.unread_count || 0), 0);
 });
 
-const ticketsList = computed(() => {
-    return localConversations.value.filter(c => c.type === 'ticket' || !!c.ticket_number);
+// Chat Filter List
+const filteredChatList = computed(() => {
+    return localConversations.value.filter(c => {
+        if (c.type === 'ticket') return false;
+        if (chatSearch.value) {
+            const q = chatSearch.value.toLowerCase();
+            const nameMatch = (c.display_name || c.customer_name || c.group_name || '').toLowerCase().includes(q);
+            const msgMatch = (c.latest_message?.body || '').toLowerCase().includes(q);
+            if (!nameMatch && !msgMatch) return false;
+        }
+        return true;
+    });
 });
 
-const regularChatsList = computed(() => {
-    return localConversations.value.filter(c => c.type !== 'ticket' && !c.ticket_number);
+// Chat Panel View Mode: 'split' (shows both User List and Chat List) | 'chats' | 'users'
+const chatPanelMode = ref('split');
+const userSearch = ref('');
+const userFilterRole = ref('all'); // 'all' | 'staff' | 'client'
+
+const displayUserList = computed(() => {
+    return props.agents.filter(u => {
+        // Exclude current logged in user from directory
+        if (u.id === props.currentAgent?.id) return false;
+
+        // Role filter for staff/admin
+        if (!isCustomer.value && userFilterRole.value !== 'all') {
+            if (userFilterRole.value === 'client' && !u.is_customer) return false;
+            if (userFilterRole.value === 'staff' && u.is_customer) return false;
+        }
+
+        // Search query
+        if (userSearch.value.trim()) {
+            const q = userSearch.value.toLowerCase();
+            const nameMatch = (u.name || '').toLowerCase().includes(q);
+            const emailMatch = (u.email || '').toLowerCase().includes(q);
+            const deptMatch = (u.department || '').toLowerCase().includes(q);
+            const desigMatch = (u.designation || '').toLowerCase().includes(q);
+            const memberIdMatch = (u.member_id || '').toLowerCase().includes(q);
+            if (!nameMatch && !emailMatch && !deptMatch && !desigMatch && !memberIdMatch) return false;
+        }
+        return true;
+    });
 });
 
-const staffDirectory = computed(() => {
-    return props.agents.filter(u => u.is_admin || u.role !== 'customer');
-});
+const staffCount = computed(() => props.agents.filter(u => !u.is_customer && u.id !== props.currentAgent?.id).length);
+const clientCount = computed(() => props.agents.filter(u => u.is_customer && u.id !== props.currentAgent?.id).length);
 
-const customerDirectory = computed(() => {
-    return props.agents.filter(u => u.role === 'customer');
-});
+function getConversationPartner(conv) {
+    if (!conv || conv.type !== 'direct') return null;
+    if (conv.members && conv.members.length > 0) {
+        return conv.members.find(m => m.id !== props.currentAgent?.id) || null;
+    }
+    return null;
+}
+
+function getConversationName(conv) {
+    if (!conv) return '';
+    if (conv.type === 'ticket') {
+        return (conv.ticket_number ? `[${conv.ticket_number}] ` : '') + (conv.ticket_subject || conv.customer_name);
+    }
+    if (conv.type === 'group') {
+        return conv.group_name || 'Group Room';
+    }
+    const partner = getConversationPartner(conv);
+    if (partner) {
+        return partner.name;
+    }
+    return conv.display_name || conv.customer_name || 'Direct Chat';
+}
+
+function getConversationAvatar(conv) {
+    if (!conv) return 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop';
+    if (conv.type === 'group') {
+        return conv.customer_avatar || 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=80&h=80&fit=crop';
+    }
+    const partner = getConversationPartner(conv);
+    if (partner && partner.avatar) {
+        return partner.avatar;
+    }
+    return conv.customer_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop';
+}
+
+function startDirectChatWithUser(user) {
+    if (!user) return;
+
+    // 1. Check if a direct conversation with this user is already in localConversations
+    const existing = localConversations.value.find(c => {
+        if (c.type === 'ticket') return false;
+        if (c.customer_email && c.customer_email.toLowerCase() === user.email.toLowerCase()) return true;
+        if (c.members && c.members.some(m => m.id === user.id)) return true;
+        return false;
+    });
+
+    if (existing) {
+        selectConversation(existing);
+        return;
+    }
+
+    // 2. Otherwise create/open direct conversation on the backend
+    router.post('/conversations/direct', {
+        target_user_id: user.id,
+        name: user.name,
+        email: user.email,
+    }, {
+        preserveScroll: true,
+        preserveState: true,
+    });
+}
 
 watch(() => props.messages, (newMsgs) => {
     localMessages.value = [...newMsgs];
@@ -123,16 +239,151 @@ watch(() => props.activeConversation, (newActive) => {
     joinChannels();
 }, { deep: true });
 
-watch(() => props.initialView, (newView) => {
-    if (newView && newView !== currentView.value) {
-        currentView.value = newView;
+function switchMainTab(tab) {
+    if (isCustomer.value && (tab === 'work_status' || tab === 'admin')) {
+        tab = 'tickets';
     }
-});
+    currentTab.value = tab;
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', tab);
+    window.history.replaceState({}, '', url);
 
-// Setup Real-Time WebSockets
+    // If switching to chat and no chat is active, pick first chat if available
+    if (tab === 'chat' && (!activeConversationRef.value || activeConversationRef.value.type === 'ticket')) {
+        const firstChat = filteredChatList.value[0];
+        if (firstChat) {
+            selectConversation(firstChat);
+        } else {
+            activeConversationRef.value = null;
+        }
+    }
+}
+
+function selectConversation(conv) {
+    if (!conv) {
+        activeConversationRef.value = null;
+        localMessages.value = [];
+        return;
+    }
+    activeConversationRef.value = { ...conv };
+    router.get('/', {
+        conversation_id: conv.id,
+        view: currentTab.value,
+    }, {
+        preserveState: true,
+        preserveScroll: true,
+        only: ['activeConversation', 'messages'],
+    });
+}
+
+function openModalWithTab(tab) {
+    activeModalTab.value = tab;
+    isNewChatModalOpen.value = true;
+}
+
+function handleSendMessage({ body, files, tempId }) {
+    if (!activeConversationRef.value) return;
+    const convId = activeConversationRef.value.id;
+    const finalBody = body?.trim() || (files?.length ? 'Attached file(s)' : '');
+
+    const tempMsg = {
+        id: tempId || Date.now(),
+        temp_id: tempId,
+        conversation_id: convId,
+        sender_type: 'agent',
+        sender_id: props.currentAgent.id,
+        sender: props.currentAgent,
+        body: finalBody,
+        is_internal_note: false,
+        created_at: new Date().toISOString(),
+        attachments: files ? files.map(f => ({
+            name: f.name,
+            size: f.size,
+            type: f.type,
+            url: URL.createObjectURL(f),
+            is_image: f.type?.startsWith('image/'),
+        })) : [],
+    };
+    localMessages.value.push(tempMsg);
+
+    if (files && files.length > 0) {
+        const formData = new FormData();
+        formData.append('body', finalBody || '');
+        formData.append('sender_type', 'agent');
+        files.forEach((file) => {
+            formData.append('files[]', file);
+        });
+
+        router.post(`/conversations/${convId}/messages`, formData, {
+            preserveScroll: true,
+            preserveState: true,
+            forceFormData: true,
+        });
+    } else {
+        router.post(`/conversations/${convId}/messages`, {
+            body: finalBody,
+            sender_type: 'agent',
+        }, {
+            preserveScroll: true,
+            preserveState: true,
+        });
+    }
+}
+
+function handleUpdateConversation(data) {
+    if (!activeConversationRef.value) return;
+    const convId = activeConversationRef.value.id;
+    Object.assign(activeConversationRef.value, data);
+
+    router.patch(`/conversations/${convId}`, data, {
+        preserveScroll: true,
+        preserveState: true,
+    });
+}
+
+function handleDeleteChat() {
+    if (!activeConversationRef.value) return;
+    const name = activeConversationRef.value.display_name || activeConversationRef.value.customer_name;
+    if (confirm(`Delete conversation "${name}"?`)) {
+        router.delete(`/conversations/${activeConversationRef.value.id}`);
+        activeConversationRef.value = null;
+    }
+}
+
+function switchToDirectChat(ticket) {
+    if (!ticket) return;
+    const matchingChat = localConversations.value.find(c => 
+        c.type !== 'ticket' && (c.customer_email === ticket.customer_email || c.customer_name === ticket.customer_name)
+    );
+    if (matchingChat) {
+        selectConversation(matchingChat);
+        switchMainTab('chat');
+    } else {
+        router.post('/conversations/direct', {
+            name: ticket.customer_name,
+            email: ticket.customer_email,
+            initial_message: `Hi ${ticket.customer_name}, following up regarding ticket ${ticket.ticket_number || ''}`,
+        }, {
+            onSuccess: () => {
+                switchMainTab('chat');
+            }
+        });
+    }
+}
+
+function logout() {
+    router.post('/logout');
+}
+
+function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// WebSocket Listeners
 function joinChannels() {
     if (!activeConversationRef.value) return;
-
     const convId = activeConversationRef.value.id;
 
     if (currentConvId && window.Echo) {
@@ -141,7 +392,6 @@ function joinChannels() {
     }
 
     currentConvId = convId;
-
     if (!window.Echo) return;
 
     window.Echo.channel(`chat.${convId}`)
@@ -179,7 +429,6 @@ function joinChannels() {
 
 function handleIncomingBroadcastMessage(message, conversationMeta) {
     if (!message) return;
-
     const existingIndex = localMessages.value.findIndex(m => 
         m.id === message.id || 
         (m.temp_id && m.body === message.body && m.sender_id === message.sender_id)
@@ -203,11 +452,9 @@ function handleIncomingBroadcastMessage(message, conversationMeta) {
 
 function handleIncomingConversationUpdate(updatedConv) {
     if (!updatedConv) return;
-
     if (activeConversationRef.value && activeConversationRef.value.id === updatedConv.id) {
         Object.assign(activeConversationRef.value, updatedConv);
     }
-
     const target = localConversations.value.find(c => c.id === updatedConv.id);
     if (target) {
         Object.assign(target, updatedConv);
@@ -218,226 +465,9 @@ function broadcastTyping(isTyping) {
     if (!currentConvId || !window.Echo) return;
     window.Echo.join(`chat.presence.${currentConvId}`)
         .whisper('typing', {
-            user: props.currentAgent?.name || 'User',
-            isTyping: isTyping,
+            isTyping,
+            user: props.currentAgent.name,
         });
-}
-
-function handleViewChange(newView) {
-    currentView.value = newView;
-
-    if (newView === 'tickets') {
-        if (!activeIsTicket.value) {
-            const firstTicket = ticketsList.value[0];
-            if (firstTicket) {
-                selectConversation(firstTicket.id, 'tickets');
-            } else {
-                activeConversationRef.value = null;
-                localMessages.value = [];
-            }
-        }
-    } else if (newView === 'chats') {
-        if (!activeIsChat.value) {
-            const firstChat = regularChatsList.value[0];
-            if (firstChat) {
-                selectConversation(firstChat.id, 'chats');
-            } else {
-                activeConversationRef.value = null;
-                localMessages.value = [];
-            }
-        }
-    } else if (newView === 'members') {
-        activeConversationRef.value = null;
-    }
-}
-
-function selectConversation(id, view = currentView.value) {
-    currentView.value = view;
-    router.get('/', {
-        conversation_id: id,
-        view: view,
-        filter: activeFilter.value,
-        search: searchQuery.value || undefined,
-    }, {
-        preserveState: true,
-        preserveScroll: true,
-        only: ['activeConversation', 'messages', 'filters', 'initialView'],
-    });
-}
-
-function setFilter(filter) {
-    activeFilter.value = filter;
-}
-
-function openModalWithTab(tab = 'ticket') {
-    activeModalTab.value = tab;
-    isNewChatModalOpen.value = true;
-}
-
-function startDirectChatWithUser(user) {
-    currentView.value = 'chats';
-    const existing = localConversations.value.find(c => 
-        c.type === 'direct' && 
-        (c.customer_email === user.email || c.members?.some(m => m.id === user.id))
-    );
-
-    if (existing) {
-        selectConversation(existing.id, 'chats');
-    } else {
-        router.post('/conversations/direct', {
-            target_user_id: user.id,
-        });
-    }
-}
-
-function toggleCustomerAccess(user) {
-    router.post(`/users/${user.id}/toggle-customer-access`, {}, {
-        preserveScroll: true,
-        preserveState: true,
-    });
-}
-
-function updateCustomerAgent(customer, agentId) {
-    router.post(`/users/${customer.id}/assign-agent`, {
-        assigned_agent_id: agentId ? Number(agentId) : null,
-    }, {
-        preserveScroll: true,
-        preserveState: true,
-    });
-}
-
-function deleteMember(user) {
-    if (confirm(`Remove member ${user.name}?`)) {
-        router.delete(`/members/${user.id}`);
-    }
-}
-
-// Instant Send Message (Optimistic UI + Server Broadcast)
-function handleSendMessage({ body, is_internal_note, files }) {
-    if (!activeConversationRef.value) return;
-    const convId = activeConversationRef.value.id;
-
-    let finalBody = body;
-    if (activeConversationRef.value.is_encrypted && !is_internal_note && finalBody && !finalBody.startsWith('🔐')) {
-        finalBody = '🔐 ' + finalBody;
-    }
-
-    const tempId = `temp-${Date.now()}`;
-    const optimisticMessage = {
-        temp_id: tempId,
-        id: null,
-        conversation_id: convId,
-        sender_type: 'agent',
-        sender_id: props.currentAgent?.id || 1,
-        body: finalBody || 'Attached file(s)',
-        is_internal_note: is_internal_note,
-        is_read: true,
-        attachments: files && files.length > 0 ? files.map(f => ({
-            name: f.name,
-            size: `${(f.size / 1024).toFixed(1)} KB`,
-            is_image: f.type.startsWith('image/'),
-            is_video: f.type.startsWith('video/'),
-            is_audio: f.type.startsWith('audio/'),
-            url: f.type.startsWith('image/') ? URL.createObjectURL(f) : '',
-        })) : null,
-        created_at: new Date().toISOString(),
-        sender: props.currentAgent,
-    };
-
-    localMessages.value.push(optimisticMessage);
-
-    if (files && files.length > 0) {
-        const formData = new FormData();
-        formData.append('body', finalBody || '');
-        formData.append('is_internal_note', is_internal_note ? '1' : '0');
-        formData.append('sender_type', 'agent');
-        files.forEach((file) => {
-            formData.append('files[]', file);
-        });
-
-        router.post(`/conversations/${convId}/messages`, formData, {
-            preserveScroll: true,
-            preserveState: true,
-            forceFormData: true,
-        });
-    } else {
-        router.post(`/conversations/${convId}/messages`, {
-            body: finalBody,
-            is_internal_note,
-            sender_type: 'agent',
-        }, {
-            preserveScroll: true,
-            preserveState: true,
-        });
-    }
-}
-
-function handleUpdateConversation(data) {
-    if (!activeConversationRef.value) return;
-    const convId = activeConversationRef.value.id;
-    Object.assign(activeConversationRef.value, data);
-
-    router.patch(`/conversations/${convId}`, data, {
-        preserveScroll: true,
-        preserveState: true,
-    });
-}
-
-function handleDeleteChat() {
-    if (!activeConversationRef.value) return;
-    const name = activeConversationRef.value.ticket_number 
-        ? `${activeConversationRef.value.ticket_number} - ${activeConversationRef.value.ticket_subject}` 
-        : activeConversationRef.value.display_name;
-
-    if (confirm(`Delete "${name}"?`)) {
-        router.delete(`/conversations/${activeConversationRef.value.id}`);
-    }
-}
-
-function handleSimulateCustomerReply() {
-    if (!activeConversationRef.value) return;
-    const convId = activeConversationRef.value.id;
-
-    const sampleReplies = [
-        "Received your reply! Testing sub-second WebSocket ping.",
-        "That worked right away, thank you!",
-        "Can you also verify if the server logs look clear?",
-    ];
-
-    const randomBody = sampleReplies[Math.floor(Math.random() * sampleReplies.length)];
-
-    typingUser.value = activeConversationRef.value.customer_name;
-    setTimeout(() => {
-        typingUser.value = null;
-        router.post(`/conversations/${convId}/simulate-customer`, {
-            body: randomBody,
-        }, {
-            preserveScroll: true,
-            preserveState: true,
-        });
-    }, 800);
-}
-
-function formatDate(isoString) {
-    if (!isoString) return '';
-    const date = new Date(isoString);
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-function statusBadge(status) {
-    switch (status) {
-        case 'open':
-            return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-        case 'in_progress':
-            return 'bg-sky-500/20 text-sky-400 border border-sky-500/30';
-        case 'pending':
-            return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-        case 'resolved':
-        case 'closed':
-            return 'bg-slate-700/50 text-slate-300 border border-slate-600/30';
-        default:
-            return 'bg-slate-800 text-slate-400';
-    }
 }
 
 onMounted(() => {
@@ -453,344 +483,504 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <Head title="FluxDesk — Real-Time Support & Tickets" />
+    <Head title="FluxDesk — Work Status, Tickets & Realtime Chat" />
 
-    <div class="flex h-screen w-screen overflow-hidden bg-slate-950 font-sans text-slate-100">
-        <!-- 1. LEFT SIDEBAR (Tickets, Live Chats, Members) -->
-        <ChatSidebar
-            :conversations="localConversations"
-            :active-conversation-id="activeConversationRef?.id"
-            :active-filter="activeFilter"
-            :search-query="searchQuery"
-            :current-agent="currentAgent"
-            :agents="agents"
-            :staff-agents="staffAgents"
-            :active-view="currentView"
-            @select-conversation="selectConversation"
-            @change-view="handleViewChange"
-            @update:active-view="handleViewChange"
-            @set-filter="setFilter"
-            @update:search-query="searchQuery = $event"
-            @open-new-chat-modal="openModalWithTab($event)"
-            @start-direct-chat-with-user="startDirectChatWithUser"
-        />
+    <div class="flex flex-col h-screen w-screen overflow-hidden bg-slate-50 font-sans text-slate-800">
+        <!-- ============================================================= -->
+        <!-- TOP GLOBAL HEADER WITH 3 MAIN MIDDLE TABS                    -->
+        <!-- ============================================================= -->
+        <header class="h-16 px-6 bg-white border-b border-slate-200 flex items-center justify-between shrink-0 z-20">
+            <!-- Left: Logo & Brand -->
+            <div class="flex items-center space-x-3">
+                <div class="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-bold text-base shadow-xs">
+                    FD
+                </div>
+                <div>
+                    <span class="text-sm font-bold text-slate-900 tracking-tight">FluxDesk</span>
+                    <span class="ml-2 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        Workspace
+                    </span>
+                </div>
+            </div>
 
-        <!-- 2. CENTER WORKSPACE -->
-        <main class="flex-1 flex flex-col h-full min-w-0 bg-slate-950 relative">
-            <!-- ========================================================= -->
-            <!-- VIEW A: TICKET WORKSPACE (STRICTLY TICKETS - NO CHAT)    -->
-            <!-- ========================================================= -->
-            <template v-if="isTicketView">
-                <template v-if="activeConversationRef && activeIsTicket">
-                    <!-- Dedicated Ticket Header -->
-                    <ChatHeader
-                        :conversation="activeConversationRef"
-                        :active-agents-count="viewingAgents.length || 1"
-                        :viewing-agents="viewingAgents"
-                        :typing-user="typingUser"
-                        :is-profile-open="isProfileOpen"
-                        :current-agent="currentAgent"
-                        :active-view="'tickets'"
-                        @toggle-profile="isProfileOpen = !isProfileOpen"
-                        @change-status="handleUpdateConversation({ status: $event })"
-                    />
-
-                    <!-- Ticket Problem / Issue Card -->
-                    <div class="mx-4 mt-3 p-3.5 rounded-2xl bg-slate-900 border border-indigo-500/30 shadow-md shrink-0">
-                        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
-                            <div class="flex items-center space-x-2">
-                                <span class="px-2.5 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-300 font-mono text-xs font-bold border border-indigo-500/30">
-                                    {{ activeConversationRef.ticket_number || '#TK-' + activeConversationRef.id }}
-                                </span>
-                                <span :class="['px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider', statusBadge(activeConversationRef.status)]">
-                                    {{ activeConversationRef.status }}
-                                </span>
-                                <span class="text-xs text-slate-400">
-                                    Priority: <strong class="text-slate-200 capitalize">{{ activeConversationRef.priority || 'medium' }}</strong>
-                                </span>
-                            </div>
-                            <div class="text-[11px] text-slate-400 font-mono">
-                                Created: {{ formatDate(activeConversationRef.created_at) }}
-                            </div>
-                        </div>
-
-                        <div class="pt-2.5">
-                            <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">
-                                Customer Problem Description:
-                            </h4>
-                            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap font-sans">
-                                {{ activeConversationRef.ticket_description || 'No detailed problem description provided.' }}
-                            </div>
-                        </div>
-
-                        <div class="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400">
-                            <div class="flex items-center space-x-1.5">
-                                <span class="text-slate-500">Requester:</span>
-                                <span class="text-slate-200 font-semibold">{{ activeConversationRef.customer_name }}</span>
-                                <span class="text-slate-500 font-mono text-[11px]">({{ activeConversationRef.customer_email }})</span>
-                            </div>
-                            <div class="flex items-center space-x-1.5">
-                                <span class="text-slate-500">Assigned Agent:</span>
-                                <span class="text-indigo-300 font-semibold">
-                                    {{ activeConversationRef.assigned_agent?.name || 'Unassigned (Pool)' }}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Ticket Resolution Thread -->
-                    <MessageThread
-                        :messages="localMessages"
-                        :conversation="activeConversationRef"
-                        :current-agent="currentAgent"
-                    />
-
-                    <!-- Ticket Reply Composer -->
-                    <ChatInput
-                        :canned-responses="cannedResponses"
-                        @send-message="handleSendMessage"
-                        @typing="broadcastTyping"
-                    />
-                </template>
-
-                <!-- Ticket Empty Queue State -->
-                <div 
-                    v-else 
-                    class="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500"
+            <!-- Middle: 3 Main Module Tabs (Work Status, Tickets, Chat) -->
+            <div class="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/90 text-xs font-semibold">
+                <!-- Tab 1: Work Status (Task Management) - ONLY FOR STAFF, NEVER FOR CUSTOMERS -->
+                <button
+                    v-if="!isCustomer"
+                    @click="switchMainTab('work_status')"
+                    :class="[
+                        'px-4 py-1.5 rounded-lg flex items-center space-x-2 transition-all',
+                        currentTab === 'work_status' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    ]"
                 >
-                    <div class="w-16 h-16 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-center mb-3 text-indigo-400 text-3xl shadow">
-                        <Ticket class="w-8 h-8 text-indigo-400" />
-                    </div>
-                    <h3 class="text-base font-bold text-slate-100">Ticket Support Desk</h3>
-                    <p class="text-xs text-slate-400 mt-1 max-w-sm">
-                        Select a ticket from the sidebar queue to inspect issue details, claim ownership, or post resolution replies.
-                    </p>
-                    <div class="flex items-center space-x-2 mt-4" v-if="currentAgent?.is_customer">
-                        <button
-                            @click="openModalWithTab('ticket')"
-                            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow transition-all flex items-center space-x-1"
-                        >
-                            <Plus class="w-3.5 h-3.5" />
-                            <span>Create New Ticket</span>
-                        </button>
+                    <CheckSquare class="w-4 h-4 text-indigo-600" />
+                    <span>Work Status</span>
+                    <span class="px-1.5 py-0.2 rounded-full bg-slate-200/80 text-slate-700 text-[10px] font-mono">
+                        {{ tasks.length }}
+                    </span>
+                </button>
+
+                <!-- Tab 2: Ticket Management -->
+                <button
+                    @click="switchMainTab('tickets')"
+                    :class="[
+                        'px-4 py-1.5 rounded-lg flex items-center space-x-2 transition-all',
+                        currentTab === 'tickets' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    ]"
+                >
+                    <Ticket class="w-4 h-4 text-indigo-600" />
+                    <span>Tickets</span>
+                    <span v-if="openTicketsCount > 0" class="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-mono font-bold">
+                        {{ openTicketsCount }}
+                    </span>
+                </button>
+
+                <!-- Tab 3: Realtime Chatting -->
+                <button
+                    @click="switchMainTab('chat')"
+                    :class="[
+                        'px-4 py-1.5 rounded-lg flex items-center space-x-2 transition-all',
+                        currentTab === 'chat' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    ]"
+                >
+                    <MessageSquare class="w-4 h-4 text-indigo-600" />
+                    <span>Realtime Chat</span>
+                    <span v-if="unreadChatCount > 0" class="px-1.5 py-0.2 rounded-full bg-indigo-600 text-white text-[10px] font-mono font-bold">
+                        {{ unreadChatCount }}
+                    </span>
+                </button>
+
+                <!-- Tab 4: Admin Hub & Setup (Admin Only) -->
+                <button
+                    v-if="isAdmin"
+                    @click="switchMainTab('admin')"
+                    :class="[
+                        'px-4 py-1.5 rounded-lg flex items-center space-x-2 transition-all',
+                        currentTab === 'admin' ? 'bg-white text-indigo-700 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    ]"
+                >
+                    <ShieldCheck class="w-4 h-4 text-indigo-600" />
+                    <span>Admin Setup</span>
+                    <span class="px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-mono font-bold">
+                        Admin
+                    </span>
+                </button>
+            </div>
+
+            <!-- Right: Logged-in User Profile & Logout -->
+            <div class="flex items-center space-x-3">
+                <div class="flex items-center space-x-2.5">
+                    <img
+                        :src="currentAgent.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop'"
+                        class="w-8 h-8 rounded-full object-cover ring-2 ring-indigo-100"
+                    />
+                    <div class="hidden sm:block text-left">
+                        <div class="text-xs font-bold text-slate-800 leading-tight">{{ currentAgent.name }}</div>
+                        <div class="text-[10px] text-slate-500 font-mono">{{ currentAgent.member_id || currentAgent.role }}</div>
                     </div>
                 </div>
-            </template>
 
-            <!-- ========================================================= -->
-            <!-- VIEW B: CHAT WORKSPACE (STRICTLY CHATS - NO TICKETS)     -->
-            <!-- ========================================================= -->
-            <template v-else-if="isChatView">
-                <template v-if="activeConversationRef && activeIsChat">
-                    <!-- Dedicated Chat Header (No ticket elements) -->
-                    <ChatHeader
-                        :conversation="activeConversationRef"
-                        :active-agents-count="viewingAgents.length || 1"
-                        :viewing-agents="viewingAgents"
-                        :typing-user="typingUser"
-                        :is-profile-open="isProfileOpen"
-                        :current-agent="currentAgent"
-                        :active-view="'chats'"
-                        @toggle-profile="isProfileOpen = !isProfileOpen"
-                        @open-add-member="openModalWithTab('member')"
-                        @delete-chat="handleDeleteChat"
-                    />
-
-                    <!-- Message Thread Stream (No ticket cards) -->
-                    <MessageThread
-                        :messages="localMessages"
-                        :conversation="activeConversationRef"
-                        :current-agent="currentAgent"
-                    />
-
-                    <!-- Chat Input Bar -->
-                    <ChatInput
-                        :canned-responses="cannedResponses"
-                        @send-message="handleSendMessage"
-                        @typing="broadcastTyping"
-                    />
-                </template>
-
-                <!-- Chat Empty State -->
-                <div 
-                    v-else 
-                    class="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500"
+                <button
+                    @click="logout"
+                    class="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-rose-600 hover:bg-slate-50 transition-colors"
+                    title="Log out"
                 >
-                    <div class="w-16 h-16 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-center mb-3 text-indigo-400 text-3xl shadow">
-                        <MessageSquare class="w-8 h-8 text-indigo-400" />
-                    </div>
-                    <h3 class="text-base font-bold text-slate-100">Direct & Group Messaging</h3>
-                    <p class="text-xs text-slate-400 mt-1 max-w-sm">
-                        Select a contact or group channel from the sidebar to start live chatting.
-                    </p>
-                    <div class="flex items-center space-x-2 mt-4">
-                        <button
-                            @click="openModalWithTab('single')"
-                            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs shadow transition-all flex items-center space-x-1"
-                        >
-                            <Plus class="w-3.5 h-3.5" />
-                            <span>Start Direct Chat</span>
-                        </button>
-                        <button
-                            v-if="!isCustomer"
-                            @click="openModalWithTab('group')"
-                            class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all flex items-center space-x-1"
-                        >
-                            <Users class="w-3.5 h-3.5" />
-                            <span>Create Group</span>
-                        </button>
-                    </div>
-                </div>
-            </template>
+                    <LogOut class="w-4 h-4" />
+                </button>
+            </div>
+        </header>
 
-            <!-- ========================================================= -->
-            <!-- VIEW C: MEMBERS / USERS DIRECTORY (Staff only)           -->
-            <!-- ========================================================= -->
-            <template v-else-if="isMembersView">
-                <div class="flex-1 flex flex-col h-full overflow-y-auto p-6 bg-slate-950 space-y-6">
-                    <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+        <!-- ============================================================= -->
+        <!-- MAIN DASHBOARD CONTENT AREA (SWITCHED BY THE 3 TABS)         -->
+        <!-- ============================================================= -->
+        <main class="flex-1 flex overflow-hidden">
+            <!-- MODULE 1: WORK STATUS (TASK MANAGEMENT DASHBOARD) -->
+            <WorkStatusDashboard
+                v-if="currentTab === 'work_status' && !isCustomer"
+                :tasks="tasks"
+                :projects="projects"
+                :staff-agents="staffAgents"
+                :current-agent="currentAgent"
+            />
+
+            <!-- MODULE 2: TICKET MANAGEMENT DASHBOARD (NO CHAT WINDOW) -->
+            <TicketDashboard
+                v-else-if="currentTab === 'tickets'"
+                :conversations="localConversations"
+                :projects="projects"
+                :active-conversation="activeConversationRef"
+                :current-agent="currentAgent"
+                :staff-agents="staffAgents"
+                @select-ticket="selectConversation"
+                @open-new-ticket="openModalWithTab('ticket')"
+                @update-ticket="handleUpdateConversation"
+                @switch-to-chat="switchToDirectChat"
+            />
+
+            <!-- MODULE 3: REALTIME CHATTING WORKSPACE -->
+            <div v-else-if="currentTab === 'chat'" class="flex-1 flex overflow-hidden">
+                <!-- ======================================================== -->
+                <!-- COLUMN 1: USER LIST (CONTACTS & ASSIGNED PERSONS)        -->
+                <!-- ======================================================== -->
+                <div 
+                    v-if="chatPanelMode === 'split' || chatPanelMode === 'users'"
+                    :class="[
+                        'border-r border-slate-200 bg-white flex flex-col shrink-0 transition-all',
+                        chatPanelMode === 'split' ? 'w-72' : 'w-80 md:w-96'
+                    ]"
+                >
+                    <!-- Header -->
+                    <div class="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
                         <div>
-                            <h2 class="text-lg font-bold text-slate-100 flex items-center space-x-2">
-                                <Users class="w-5 h-5 text-indigo-400" />
-                                <span>Users & Team Directory</span>
-                            </h2>
-                            <p class="text-xs text-slate-400 mt-0.5">
-                                Manage staff agents, customer accounts, and 1-on-1 direct conversations.
+                            <div class="flex items-center space-x-1.5">
+                                <UserCheck v-if="isCustomer" class="w-4 h-4 text-emerald-600" />
+                                <Users v-else class="w-4 h-4 text-indigo-600" />
+                                <h3 class="text-xs font-bold text-slate-800">
+                                    {{ isCustomer ? 'Assigned Person' : 'User List' }}
+                                </h3>
+                                <span class="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-bold">
+                                    {{ displayUserList.length }}
+                                </span>
+                            </div>
+                            <p class="text-[10px] text-slate-500 mt-0.5">
+                                {{ isCustomer ? 'Your designated support specialist' : 'Direct message team or clients' }}
                             </p>
                         </div>
+
+                        <!-- Mode Switcher -->
+                        <div class="flex items-center p-0.5 bg-slate-200/70 rounded-lg text-[10px] font-semibold text-slate-600">
+                            <button
+                                @click="chatPanelMode = 'split'"
+                                :class="['px-2 py-1 rounded transition-colors', chatPanelMode === 'split' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'hover:text-slate-900']"
+                                title="Show both User List and Chat List"
+                            >
+                                <Columns class="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                                @click="chatPanelMode = 'chats'"
+                                :class="['px-2 py-1 rounded transition-colors', chatPanelMode === 'chats' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'hover:text-slate-900']"
+                                title="Show Chat List only"
+                            >
+                                <MessageSquare class="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                                @click="chatPanelMode = 'users'"
+                                :class="['px-2 py-1 rounded transition-colors', chatPanelMode === 'users' ? 'bg-white text-indigo-700 shadow-2xs font-bold' : 'hover:text-slate-900']"
+                                title="Show User List only"
+                            >
+                                <Users class="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Role Filters (Staff/Admin only) -->
+                    <div v-if="!isCustomer" class="px-3 pt-2 pb-1.5 flex items-center space-x-1 border-b border-slate-100 bg-white">
                         <button
-                            v-if="isAdmin"
-                            @click="openModalWithTab('member')"
-                            class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow flex items-center space-x-1.5 transition-all"
+                            @click="userFilterRole = 'all'"
+                            :class="['px-2 py-0.8 rounded-md text-[10px] font-semibold transition-colors', userFilterRole === 'all' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200']"
                         >
-                            <Plus class="w-3.5 h-3.5" />
-                            <span>Add User / Member</span>
+                            All ({{ props.agents.filter(u => u.id !== currentAgent.id).length }})
+                        </button>
+                        <button
+                            @click="userFilterRole = 'staff'"
+                            :class="['px-2 py-0.8 rounded-md text-[10px] font-semibold transition-colors', userFilterRole === 'staff' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200']"
+                        >
+                            Staff ({{ staffCount }})
+                        </button>
+                        <button
+                            @click="userFilterRole = 'client'"
+                            :class="['px-2 py-0.8 rounded-md text-[10px] font-semibold transition-colors', userFilterRole === 'client' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200']"
+                        >
+                            Clients ({{ clientCount }})
                         </button>
                     </div>
 
-                    <!-- Staff Section -->
-                    <div class="space-y-3">
-                        <div class="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center space-x-2">
-                            <span>Staff & Support Team ({{ staffDirectory.length }})</span>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <div
-                                v-for="user in staffDirectory"
-                                :key="user.id"
-                                class="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 shadow-sm hover:border-slate-700 transition-all"
-                            >
-                                <div class="flex items-center space-x-3">
-                                    <img :src="user.avatar" class="w-10 h-10 rounded-full object-cover ring-2 ring-indigo-500/30" />
-                                    <div class="min-w-0 flex-1">
-                                        <div class="font-bold text-xs text-slate-100 truncate flex items-center space-x-1.5">
-                                            <span>{{ user.name }}</span>
-                                            <span v-if="user.is_admin" class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">Admin</span>
-                                            <span v-if="user.is_customer" class="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-bold" title="Can also create tickets">Dual Role</span>
-                                        </div>
-                                        <p class="text-[11px] text-slate-400 truncate">{{ user.email }}</p>
-                                        <p class="text-[10px] text-slate-500 font-mono">{{ user.member_id || 'ID: ' + user.id }} &bull; Staff</p>
-                                    </div>
-                                </div>
-
-                                <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
-                                    <button
-                                        v-if="isAdmin"
-                                        @click="toggleCustomerAccess(user)"
-                                        :class="[
-                                            'px-2 py-1 rounded-lg text-[10px] font-semibold border transition-all',
-                                            user.is_customer 
-                                                ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30' 
-                                                : 'bg-slate-950 border-slate-700 text-slate-400 hover:text-slate-200'
-                                        ]"
-                                        :title="user.is_customer ? 'Dual Role: Can create tickets. Click to remove.' : 'Click to grant customer ticket capability.'"
-                                    >
-                                        {{ user.is_customer ? 'Ticket: Enabled' : 'Ticket: Disabled' }}
-                                    </button>
-
-                                    <button
-                                        @click="startDirectChatWithUser(user)"
-                                        class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center space-x-1 transition-all"
-                                    >
-                                        <MessageSquare class="w-3 h-3" />
-                                        <span>Message</span>
-                                    </button>
-                                </div>
-                            </div>
+                    <!-- Search Input -->
+                    <div class="p-2.5 border-b border-slate-100 bg-white">
+                        <div class="relative">
+                            <Search class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                v-model="userSearch"
+                                type="text"
+                                :placeholder="isCustomer ? 'Search support specialist...' : 'Search users, dept, role...'"
+                                class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:bg-white focus:border-indigo-600"
+                            />
                         </div>
                     </div>
 
-                    <!-- Customers Section -->
-                    <div class="space-y-3 pt-4 border-t border-slate-800">
-                        <div class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-2">
-                            <span>Customers Directory ({{ customerDirectory.length }})</span>
-                        </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            <div
-                                v-for="cust in customerDirectory"
-                                :key="cust.id"
-                                class="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 shadow-sm hover:border-slate-700 transition-all"
-                            >
-                                <div class="flex items-center space-x-3">
-                                    <img :src="cust.avatar" class="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-500/30" />
-                                    <div class="min-w-0 flex-1">
-                                        <div class="font-bold text-xs text-slate-100 truncate">
-                                            {{ cust.name }}
-                                        </div>
-                                        <p class="text-[11px] text-slate-400 truncate">{{ cust.email }}</p>
-                                        <p class="text-[10px] text-slate-500 font-mono">{{ cust.member_id }} &bull; Customer</p>
-                                    </div>
+                    <!-- User Cards Scroll List -->
+                    <div class="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 space-y-1 bg-white">
+                        <div
+                            v-for="u in displayUserList"
+                            :key="u.id"
+                            @click="startDirectChatWithUser(u)"
+                            :class="[
+                                'p-2.5 rounded-xl cursor-pointer transition-all border text-left',
+                                (activeConversationRef?.type === 'direct' && (activeConversationRef?.members?.some(m => m.id === u.id) || activeConversationRef?.customer_email === u.email))
+                                    ? 'bg-indigo-50/90 border-indigo-200 shadow-2xs' 
+                                    : 'border-transparent hover:bg-slate-50 hover:border-slate-200'
+                            ]"
+                        >
+                            <div class="flex items-start space-x-2.5">
+                                <div class="relative shrink-0 mt-0.5">
+                                    <img
+                                        :src="u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&h=80&fit=crop'"
+                                        class="w-9 h-9 rounded-full object-cover ring-1 ring-slate-200"
+                                    />
+                                    <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"></span>
                                 </div>
 
-                                <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                                    <div class="text-[11px]">
-                                        <span class="text-slate-500">Assigned: </span>
-                                        <select
-                                            v-if="isAdmin"
-                                            :value="cust.assigned_agent_id || ''"
-                                            @change="updateCustomerAgent(cust, $event.target.value)"
-                                            class="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-[10px] text-indigo-300 focus:outline-none"
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center justify-between gap-1">
+                                        <h4 class="text-xs font-bold text-slate-900 truncate">
+                                            {{ u.name }}
+                                        </h4>
+                                        <!-- Role / Status Badge -->
+                                        <span 
+                                            v-if="u.is_admin"
+                                            class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-purple-100 text-purple-700 shrink-0"
                                         >
-                                            <option value="">None</option>
-                                            <option v-for="s in staffDirectory" :key="s.id" :value="s.id">{{ s.name }}</option>
-                                        </select>
-                                        <span v-else class="text-indigo-300 font-medium">{{ cust.assigned_agent?.name || 'Unassigned' }}</span>
+                                            Admin
+                                        </span>
+                                        <span 
+                                            v-else-if="u.is_customer"
+                                            class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 shrink-0"
+                                        >
+                                            Client
+                                        </span>
+                                        <span 
+                                            v-else-if="u.is_team_lead"
+                                            class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 shrink-0"
+                                        >
+                                            Lead
+                                        </span>
+                                        <span 
+                                            v-else
+                                            class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-slate-100 text-slate-700 shrink-0"
+                                        >
+                                            Staff
+                                        </span>
                                     </div>
 
-                                    <button
-                                        @click="startDirectChatWithUser(cust)"
-                                        class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold flex items-center space-x-1 transition-all"
-                                    >
-                                        <MessageSquare class="w-3 h-3" />
-                                        <span>Message</span>
-                                    </button>
+                                    <!-- Department & Designation -->
+                                    <div class="text-[11px] text-slate-600 truncate mt-0.5 font-medium">
+                                        {{ u.designation || u.role }}
+                                    </div>
+                                    <div class="text-[10px] text-slate-400 truncate flex items-center space-x-1 mt-0.5">
+                                        <span>{{ u.department || 'Operations' }}</span>
+                                        <span>•</span>
+                                        <span class="font-mono text-slate-500">{{ u.member_id || u.email }}</span>
+                                    </div>
+
+                                    <!-- For Customer: Highlight "Assigned Specialist" -->
+                                    <div v-if="isCustomer" class="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between">
+                                        <span class="text-[10px] font-bold text-emerald-700 flex items-center space-x-1">
+                                            <Sparkles class="w-3 h-3 text-emerald-600" />
+                                            <span>Your Assigned Specialist</span>
+                                        </span>
+                                        <span class="text-[10px] font-semibold text-indigo-600 hover:text-indigo-800">
+                                            Chat Now &rarr;
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div v-if="displayUserList.length === 0" class="py-12 text-center text-xs text-slate-400">
+                            {{ isCustomer ? 'No assigned support specialist found.' : 'No users match your search.' }}
                         </div>
                     </div>
                 </div>
-            </template>
+
+                <!-- ======================================================== -->
+                <!-- COLUMN 2: CHAT LIST (ACTIVE CONVERSATIONS)              -->
+                <!-- ======================================================== -->
+                <div 
+                    v-if="chatPanelMode === 'split' || chatPanelMode === 'chats'"
+                    :class="[
+                        'border-r border-slate-200 bg-white flex flex-col shrink-0 transition-all',
+                        chatPanelMode === 'split' ? 'w-72' : 'w-80 md:w-96'
+                    ]"
+                >
+                    <!-- Header -->
+                    <div class="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+                        <div class="flex items-center space-x-1.5">
+                            <MessageSquare class="w-4 h-4 text-indigo-600" />
+                            <h3 class="text-xs font-bold text-slate-800">
+                                Chat List
+                            </h3>
+                            <span class="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-bold">
+                                {{ filteredChatList.length }}
+                            </span>
+                        </div>
+
+                        <div class="flex items-center space-x-1">
+                            <button
+                                v-if="!isCustomer"
+                                @click="openModalWithTab('group')"
+                                class="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-semibold flex items-center space-x-1 transition-colors"
+                                title="Create Group Room"
+                            >
+                                <Users class="w-3.5 h-3.5" />
+                                <span>Group</span>
+                            </button>
+
+                            <!-- Mode Switcher if in chats-only mode -->
+                            <div v-if="chatPanelMode === 'chats'" class="flex items-center p-0.5 bg-slate-200/70 rounded-lg text-[10px] font-semibold text-slate-600">
+                                <button
+                                    @click="chatPanelMode = 'split'"
+                                    class="px-2 py-1 rounded hover:text-slate-900 transition-colors"
+                                    title="Show both User List & Chat List"
+                                >
+                                    <Columns class="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                    @click="chatPanelMode = 'users'"
+                                    class="px-2 py-1 rounded hover:text-slate-900 transition-colors"
+                                    title="Show User List"
+                                >
+                                    <Users class="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Search Box -->
+                    <div class="p-2.5 border-b border-slate-100 bg-white">
+                        <div class="relative">
+                            <Search class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input
+                                v-model="chatSearch"
+                                type="text"
+                                placeholder="Search conversations..."
+                                class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:bg-white focus:border-indigo-600"
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Chat Items List -->
+                    <div class="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 space-y-1 bg-white">
+                        <div
+                            v-for="c in filteredChatList"
+                            :key="c.id"
+                            @click="selectConversation(c)"
+                            :class="[
+                                'p-2.5 rounded-xl cursor-pointer transition-all border text-left flex items-center space-x-3',
+                                activeConversationRef?.id === c.id 
+                                    ? 'bg-indigo-50/90 border-indigo-200 shadow-2xs' 
+                                    : 'border-transparent hover:bg-slate-50 hover:border-slate-200'
+                            ]"
+                        >
+                            <div class="relative shrink-0">
+                                <img
+                                    :src="getConversationAvatar(c)"
+                                    class="w-9 h-9 rounded-full object-cover ring-1 ring-slate-200"
+                                />
+                                <span class="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"></span>
+                            </div>
+
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center justify-between">
+                                    <h4 class="text-xs font-bold text-slate-900 truncate">
+                                        {{ getConversationName(c) }}
+                                    </h4>
+                                    <span class="text-[10px] text-slate-400 font-mono">
+                                        {{ formatTime(c.last_message_at) }}
+                                    </span>
+                                </div>
+                                <p class="text-[11px] text-slate-500 truncate mt-0.5">
+                                    {{ c.latest_message?.body || 'No messages yet' }}
+                                </p>
+                            </div>
+
+                            <span v-if="c.unread_count > 0" class="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
+                                {{ c.unread_count }}
+                            </span>
+                        </div>
+
+                        <div v-if="filteredChatList.length === 0" class="py-12 text-center text-xs text-slate-400">
+                            <p>No active chats yet</p>
+                            <p class="text-[10px] text-slate-400 mt-1">Select any person from the User List to start chatting.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ======================================================== -->
+                <!-- COLUMN 3: ACTIVE CHAT CONVERSATION WINDOW                -->
+                <!-- ======================================================== -->
+                <div class="flex-1 flex flex-col h-full bg-white relative min-w-0">
+                    <template v-if="activeConversationRef && activeConversationRef.type !== 'ticket'">
+                        <ChatHeader
+                            :conversation="activeConversationRef"
+                            :active-agents-count="viewingAgents.length || 1"
+                            :viewing-agents="viewingAgents"
+                            :typing-user="typingUser"
+                            :is-profile-open="false"
+                            :current-agent="currentAgent"
+                            :active-view="'chats'"
+                            @open-add-member="openModalWithTab('member')"
+                            @delete-chat="handleDeleteChat"
+                        />
+
+                        <MessageThread
+                            :messages="localMessages"
+                            :conversation="activeConversationRef"
+                            :current-agent="currentAgent"
+                        />
+
+                        <ChatInput
+                            :canned-responses="cannedResponses"
+                            @send-message="handleSendMessage"
+                            @typing="broadcastTyping"
+                        />
+                    </template>
+
+                    <!-- Empty State for Chat -->
+                    <div v-else class="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500 bg-slate-50/50">
+                        <div class="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mb-3 text-indigo-600 shadow-xs">
+                            <MessageSquare class="w-7 h-7 text-indigo-600" />
+                        </div>
+                        <h3 class="text-sm font-bold text-slate-800">Realtime Chat</h3>
+                        <p class="text-xs text-slate-500 mt-1 max-w-sm">
+                            {{ isCustomer ? 'Click your assigned support specialist in the User List to start chatting.' : 'Select any user from the User List or an active conversation to chat live.' }}
+                        </p>
+                        
+                        <!-- Quick Action in Empty State -->
+                        <div v-if="displayUserList.length > 0" class="mt-4 flex flex-wrap gap-2 justify-center max-w-md">
+                            <button
+                                v-for="u in displayUserList.slice(0, 3)"
+                                :key="u.id"
+                                @click="startDirectChatWithUser(u)"
+                                class="px-3 py-1.5 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-xl text-xs font-semibold text-slate-700 flex items-center space-x-2 transition-all shadow-2xs"
+                            >
+                                <img :src="u.avatar" class="w-5 h-5 rounded-full object-cover" />
+                                <span>Chat with {{ u.name.split(' ')[0] }}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODULE 4: ADMIN HUB & SETUP PROCEDURE -->
+            <AdminOverviewDashboard
+                v-else-if="currentTab === 'admin' && isAdmin"
+                :projects="projects"
+                :agents="agents"
+                :tasks="tasks"
+                :conversations="localConversations"
+                :departments="departments"
+                :current-agent="currentAgent"
+                @switch-to-tab="switchMainTab"
+            />
         </main>
 
-        <!-- 3. RIGHT DETAILS & TICKET UPDATER PANEL -->
-        <ProfilePanel
-            v-if="!isMembersView && activeConversationRef"
-            :conversation="activeConversationRef"
-            :agents="agents"
-            :staff-agents="staffAgents"
-            :current-agent="currentAgent"
-            :active-view="currentView"
-            :is-open="isProfileOpen"
-            @update-conversation="handleUpdateConversation"
-            @open-add-member="openModalWithTab('member')"
-            @delete-chat="handleDeleteChat"
-            @close="isProfileOpen = false"
-        />
-
-        <!-- 4. ACTION MODAL (Ticket, Chat, Group, Member) -->
+        <!-- Dynamic Action Modal (Ticket, Chat, Group, Member) -->
         <NewChatModal
             :is-open="isNewChatModalOpen"
             :agents="agents"
             :staff-agents="staffAgents"
+            :projects="projects"
             :active-conversation-id="activeConversationRef?.id"
             :current-agent="currentAgent"
             :default-tab="activeModalTab"

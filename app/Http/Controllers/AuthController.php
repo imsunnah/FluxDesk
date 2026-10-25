@@ -15,7 +15,9 @@ class AuthController extends Controller
      */
     public function showLogin(): Response
     {
-        $demoUsers = User::select('id', 'name', 'email', 'avatar', 'role', 'is_admin', 'member_id')->get();
+        $demoUsers = User::with('project:id,name')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->get();
 
         return Inertia::render('Auth/Login', [
             'demoUsers' => $demoUsers,
@@ -32,7 +34,7 @@ class AuthController extends Controller
             'password' => 'required',
         ]);
 
-        if (Auth::attempt($credentials, true)) {
+        if (Auth::attempt($credentials)) {
             $request->session()->regenerate();
             return redirect()->intended('/');
         }
@@ -47,7 +49,7 @@ class AuthController extends Controller
      */
     public function quickLogin(Request $request, User $user)
     {
-        Auth::login($user, true);
+        Auth::login($user);
         $request->session()->regenerate();
 
         return redirect('/');

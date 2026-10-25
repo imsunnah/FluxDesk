@@ -9,6 +9,7 @@ use App\Jobs\ProcessOfflineNotification;
 use App\Models\CannedResponse;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\Project;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -19,39 +20,41 @@ use Inertia\Response;
 class ChatController extends Controller
 {
     /**
+     * Safely broadcast WebSocket events without crashing the request if Reverb / Pusher is offline.
+     */
+    protected function safeBroadcast($event): void
+    {
+        try {
+            $pending = broadcast($event);
+            unset($pending);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('WebSocket broadcast skipped (Reverb offline): ' . $e->getMessage());
+        }
+    }
+
+    /**
      * Monolithic Chat Workspace handler serving Inertia props.
      */
-    public function index(Request $request): Response
+    public function index(Request $request): Response|\Illuminate\Http\RedirectResponse
     {
         $currentAgent = Auth::user();
         if (!$currentAgent) {
-            $currentAgent = User::where('is_admin', true)->first() ?? User::first();
-            if ($currentAgent) {
-                Auth::login($currentAgent);
-            } else {
-                $currentAgent = User::create([
-                    'member_id' => 'ADM-001',
-                    'name' => 'Alex Rivera (Admin)',
-                    'email' => 'alex@fluxdesk.io',
-                    'password' => bcrypt('password123'),
-                    'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&h=120&fit=crop&crop=faces',
-                    'role' => 'admin',
-                    'is_admin' => true,
-                ]);
-                Auth::login($currentAgent);
-            }
+            return redirect()->route('login');
         }
 
         $filter = $request->query('filter', 'all'); // 'all', 'direct', 'groups', 'encrypted', 'unread'
         $search = $request->query('search', '');
         $selectedId = $request->query('conversation_id');
-        $view = $request->query('view', 'tickets'); // 'tickets' | 'chats' | 'members'
+        $view = $request->query('view', 'tickets'); // 'tickets' | 'chat' | 'admin' | 'work_status'
+        if ($view === 'chats') {
+            $view = 'chat';
+        }
 
         $isCustomer = $currentAgent->is_customer;
         $isAdmin = (bool) $currentAgent->is_admin;
 
         $query = Conversation::query()
-            ->with(['assignedAgent', 'latestMessage', 'members'])
+            ->with(['assignedAgent', 'latestMessage', 'members', 'project'])
             ->withCount(['messages as unread_count' => function ($q) {
                 $q->where('is_read', false)->where('sender_type', 'customer');
             }]);
@@ -120,14 +123,14 @@ class ChatController extends Controller
         // Determine active conversation based on view (tickets vs chats)
         $activeConversation = null;
         if ($selectedId) {
-            $candidate = Conversation::with(['assignedAgent', 'members'])->find($selectedId);
+            $candidate = Conversation::with(['assignedAgent', 'members', 'project'])->find($selectedId);
             if ($candidate) {
                 $isTicketCandidate = ($candidate->type === 'ticket' || !empty($candidate->ticket_number));
                 
                 // Strictly enforce view separation: tickets view only opens tickets, chats view only opens chats
                 if ($view === 'tickets' && !$isTicketCandidate) {
                     $candidate = null;
-                } elseif ($view === 'chats' && $isTicketCandidate) {
+                } elseif (($view === 'chats' || $view === 'chat') && $isTicketCandidate) {
                     $candidate = null;
                 }
 
@@ -153,7 +156,7 @@ class ChatController extends Controller
         if (!$activeConversation && $conversations->isNotEmpty()) {
             if ($view === 'tickets') {
                 $activeConversation = $conversations->first(fn($c) => $c->type === 'ticket' || !empty($c->ticket_number));
-            } elseif ($view === 'chats') {
+            } elseif ($view === 'chats' || $view === 'chat') {
                 $activeConversation = $conversations->first(fn($c) => $c->type !== 'ticket' && empty($c->ticket_number));
             }
         }
@@ -203,12 +206,13 @@ class ChatController extends Controller
             }
 
             $allMembers = User::whereIn('id', $assignedStaffIds)
-                ->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_customer', 'assigned_agent_id')
+                ->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_customer', 'is_team_lead', 'project_id', 'assigned_agent_id')
+                ->with(['project:id,name', 'projects:id,name,client_id,status'])
                 ->get();
         } else {
             // Staff / Admin can see staff and customers
-            $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_customer', 'assigned_agent_id')
-                ->with('assignedAgent:id,name,member_id')
+            $allMembers = User::select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_customer', 'is_team_lead', 'project_id', 'assigned_agent_id')
+                ->with(['assignedAgent:id,name,member_id', 'project:id,name', 'projects:id,name,client_id,status', 'assignedTasks:id,title,status'])
                 ->orderBy('is_admin', 'desc')
                 ->orderBy('role', 'asc')
                 ->get();
@@ -218,7 +222,37 @@ class ChatController extends Controller
         $staffAgents = User::where(function ($q) {
             $q->where('is_admin', true)
               ->orWhereIn('role', ['admin', 'agent', 'staff', 'both', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
-        })->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'is_customer')->get();
+        })->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_customer', 'is_team_lead')->get();
+
+        $departments = [
+            'Engineering',
+            'Technical Support',
+            'Customer Success',
+            'Quality Assurance (QA)',
+            'DevOps & Infrastructure',
+            'Product & Design',
+            'Management & Operations'
+        ];
+
+        $projects = Project::with(['client:id,name,email,member_id'])
+            ->withCount(['tasks', 'tickets', 'clients'])
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $tasksQuery = \App\Models\Task::with([
+            'project:id,name',
+            'client:id,name,email',
+            'assignees:id,name,avatar,member_id',
+            'creator:id,name'
+        ]);
+        if ($isCustomer) {
+            $tasks = [];
+            if ($view === 'work_status' || empty($view)) {
+                $view = 'tickets';
+            }
+        } else {
+            $tasks = $tasksQuery->orderBy('created_at', 'desc')->get();
+        }
 
         return Inertia::render('Chat/Index', [
             'conversations' => $conversations,
@@ -227,7 +261,10 @@ class ChatController extends Controller
             'cannedResponses' => $cannedResponses,
             'agents' => $allMembers,
             'staffAgents' => $staffAgents,
+            'departments' => $departments,
             'currentAgent' => $currentAgent,
+            'tasks' => $tasks,
+            'projects' => $projects,
             'initialView' => $view,
             'filters' => [
                 'filter' => $filter,
@@ -261,6 +298,9 @@ class ChatController extends Controller
         $isEncrypted = (bool) ($validated['is_encrypted'] ?? false);
 
         $targetUser = !empty($validated['target_user_id']) ? User::find($validated['target_user_id']) : null;
+        if (!$targetUser && !empty($validated['email'])) {
+            $targetUser = User::where('email', $validated['email'])->first();
+        }
 
         // Customer can only message staff, never another customer
         if ($currentAgent->is_customer) {
@@ -309,11 +349,11 @@ class ChatController extends Controller
                 ]);
 
                 $existing->update(['last_message_at' => now()]);
-                broadcast(new MessageSent($msg));
-                broadcast(new ConversationUpdated($existing));
+                $this->safeBroadcast(new MessageSent($msg));
+                $this->safeBroadcast(new ConversationUpdated($existing));
             }
 
-            return redirect()->route('chat.index', ['conversation_id' => $existing->id, 'view' => 'chats']);
+            return redirect()->route('chat.index', ['conversation_id' => $existing->id, 'view' => 'chat']);
         }
 
         // Create new direct conversation if none exists
@@ -350,10 +390,10 @@ class ChatController extends Controller
                 'is_read' => true,
             ]);
 
-            broadcast(new MessageSent($msg));
+            $this->safeBroadcast(new MessageSent($msg));
         }
 
-        return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'chats']);
+        return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'chat']);
     }
 
     /**
@@ -416,7 +456,7 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
+        $this->safeBroadcast(new MessageSent($msg));
 
         return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'chats']);
     }
@@ -431,7 +471,11 @@ class ChatController extends Controller
             'name' => 'required|string|max:100',
             'email' => 'required|email|max:150|unique:users,email',
             'role' => 'nullable|string|max:100',
+            'department' => 'nullable|string|max:100',
+            'designation' => 'nullable|string|max:100',
             'is_customer' => 'nullable|boolean',
+            'is_team_lead' => 'nullable|boolean',
+            'project_id' => 'nullable|exists:projects,id',
             'assigned_agent_id' => 'nullable|exists:users,id',
             'password' => 'nullable|string|min:6',
             'is_admin' => 'boolean',
@@ -454,6 +498,9 @@ class ChatController extends Controller
             ? $validated['member_id'] 
             : $prefix . str_pad((string)(User::count() + 101), 3, '0', STR_PAD_LEFT);
 
+        $department = $validated['department'] ?? ($isCustomer ? 'Client Accounts' : 'Engineering');
+        $designation = $validated['designation'] ?? ($isCustomer ? 'Client Representative' : 'Technical Support Engineer');
+
         $newUser = User::create([
             'member_id' => $memberId,
             'name' => $validated['name'],
@@ -461,8 +508,12 @@ class ChatController extends Controller
             'password' => bcrypt($validated['password'] ?? 'password123'),
             'avatar' => $avatarPool[array_rand($avatarPool)],
             'role' => $role,
+            'department' => $department,
+            'designation' => $designation,
             'is_admin' => (bool) ($validated['is_admin'] ?? false),
             'is_customer' => $isCustomer,
+            'is_team_lead' => (bool) ($validated['is_team_lead'] ?? false),
+            'project_id' => $validated['project_id'] ?? null,
             'assigned_agent_id' => $validated['assigned_agent_id'] ?? null,
         ]);
 
@@ -479,7 +530,7 @@ class ChatController extends Controller
                     'is_internal_note' => false,
                     'is_read' => true,
                 ]);
-                broadcast(new MessageSent($msg));
+                $this->safeBroadcast(new MessageSent($msg));
             }
         }
 
@@ -572,8 +623,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -594,8 +645,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -616,8 +667,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -640,6 +691,7 @@ class ChatController extends Controller
             'customer_name' => 'nullable|string|max:100',
             'customer_email' => 'nullable|email|max:150',
             'description' => 'required|string|max:5000',
+            'project_id' => 'nullable|exists:projects,id',
             'priority' => 'nullable|in:low,medium,high',
             'assigned_agent_id' => 'nullable|exists:users,id',
         ]);
@@ -657,6 +709,7 @@ class ChatController extends Controller
             'ticket_number' => $ticketNumber,
             'ticket_subject' => $validated['subject'],
             'ticket_description' => $validated['description'],
+            'project_id' => $validated['project_id'] ?? $currentUser->project_id,
             'customer_name' => $customerName,
             'customer_email' => $customerEmail,
             'customer_avatar' => $customerAvatar,
@@ -683,8 +736,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->route('chat.index', ['conversation_id' => $conversation->id, 'view' => 'tickets']);
     }
@@ -717,8 +770,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -766,8 +819,8 @@ class ChatController extends Controller
             'is_read' => true,
         ]);
 
-        broadcast(new MessageSent($msg));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($msg));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -843,8 +896,8 @@ class ChatController extends Controller
         $conversation->save();
 
         // Broadcast to all listeners in the exact same second
-        broadcast(new MessageSent($message));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($message));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         ProcessOfflineNotification::dispatch($message);
         AuditLogMessage::dispatch($message);
@@ -878,10 +931,10 @@ class ChatController extends Controller
                 'is_internal_note' => false,
                 'is_read' => true,
             ]);
-            broadcast(new MessageSent($msg));
+            $this->safeBroadcast(new MessageSent($msg));
         }
 
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
 
         return redirect()->back();
     }
@@ -931,10 +984,110 @@ class ChatController extends Controller
         }
         $conversation->save();
 
-        broadcast(new MessageSent($message));
-        broadcast(new ConversationUpdated($conversation));
+        $this->safeBroadcast(new MessageSent($message));
+        $this->safeBroadcast(new ConversationUpdated($conversation));
         AuditLogMessage::dispatch($message);
 
         return redirect()->back();
+    }
+
+    /**
+     * Admin: Create a new project.
+     */
+    public function storeProject(Request $request)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can create projects.');
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:150',
+            'client_id' => 'nullable|exists:users,id',
+            'description' => 'nullable|string',
+            'status' => 'nullable|string|in:active,completed,on_hold',
+        ]);
+
+        Project::create([
+            'name' => $validated['name'],
+            'client_id' => $validated['client_id'] ?? null,
+            'description' => $validated['description'] ?? null,
+            'status' => $validated['status'] ?? 'active',
+        ]);
+
+        return redirect()->back()->with('success', 'Project created successfully.');
+    }
+
+    /**
+     * Admin: Update an existing project.
+     */
+    public function updateProject(Request $request, Project $project)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can update projects.');
+        }
+
+        $validated = $request->validate([
+            'name' => 'sometimes|required|string|max:150',
+            'client_id' => 'nullable|exists:users,id',
+            'description' => 'nullable|string',
+            'status' => 'sometimes|required|string|in:active,completed,on_hold',
+        ]);
+
+        $project->update($validated);
+
+        return redirect()->back()->with('success', 'Project updated successfully.');
+    }
+
+    /**
+     * Admin: Delete project.
+     */
+    public function deleteProject(Project $project)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can delete projects.');
+        }
+
+        $project->delete();
+
+        return redirect()->back()->with('success', 'Project deleted.');
+    }
+
+    /**
+     * Admin: Toggle Team Lead permission on a staff employee.
+     */
+    public function toggleTeamLead(User $user)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can toggle team lead status.');
+        }
+
+        $user->is_team_lead = !$user->is_team_lead;
+        $user->save();
+
+        return redirect()->back()->with('success', 'Team lead status updated.');
+    }
+
+    /**
+     * Admin: Assign / update customer project.
+     */
+    public function updateUserProject(Request $request, User $user)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can update user project.');
+        }
+
+        $validated = $request->validate([
+            'project_id' => 'nullable|exists:projects,id',
+        ]);
+
+        $user->project_id = $validated['project_id'] ?? null;
+        $user->save();
+
+        return redirect()->back()->with('success', 'Project assigned to client.');
     }
 }
