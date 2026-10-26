@@ -243,7 +243,8 @@ class ChatController extends Controller
             'project:id,name',
             'client:id,name,email',
             'assignees:id,name,avatar,member_id',
-            'creator:id,name'
+            'creator:id,name',
+            'delayLockedByUser:id,name,member_id'
         ]);
         if ($isCustomer) {
             $tasks = [];

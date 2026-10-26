@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { router } from '@inertiajs/vue3';
 import { 
     CheckSquare, 
@@ -10,15 +10,27 @@ import {
     X, 
     AlertCircle, 
     CheckCircle2, 
-    TrendingUp,
-    Filter,
-    Users,
-    Briefcase,
-    Building,
-    MessageSquare,
-    AlertTriangle,
-    ShieldCheck
+    TrendingUp, 
+    Filter, 
+    Users, 
+    Briefcase, 
+    Building, 
+    AlertTriangle, 
+    ShieldCheck, 
+    GripVertical, 
+    BarChart3, 
+    Kanban, 
+    Eye, 
+    ArrowUpRight, 
+    Lock, 
+    History, 
+    UserCheck, 
+    User, 
+    Sparkles, 
+    AlertOctagon,
+    Table
 } from 'lucide-vue-next';
+import WorkStatusDetailedDashboard from '@/Components/WorkStatusDetailedDashboard.vue';
 
 const props = defineProps({
     tasks: {
@@ -41,27 +53,99 @@ const props = defineProps({
 
 const isCustomer = computed(() => !!props.currentAgent?.is_customer);
 const isAdmin = computed(() => !!props.currentAgent?.is_admin);
-const isTeamLead = computed(() => !!props.currentAgent?.is_team_lead);
-const canAssignOthers = computed(() => isAdmin.value || isTeamLead.value);
+const isActualTeamLead = computed(() => !!props.currentAgent?.is_team_lead || isAdmin.value);
 
-// Filters
+// View Mode: 'workspace' (Clean Drag-and-Drop Task Board) vs 'overview' (Full Details & Overview Dashboard)
+const currentView = ref('workspace');
+
+// 1. TEAM LEAD INITIALLY SEES HIS OWN TASKS (Default: 'me')
+// Keeps button/selector to see another member's tasks from the top!
+const selectedMember = ref('me'); // 'me' | 'all' | agent.id string
+
+// Date filter: 'all' vs 'today' (everyone can see today's data)
+const dateFilter = ref('all'); // 'all' | 'today'
+
+// Other standard filters
 const filterPriority = ref('all');
 const filterProject = ref('all');
-const filterTimeStatus = ref('all'); // 'all', 'overtime', 'ontrack'
 const searchQuery = ref('');
 
+// Today's date string YYYY-MM-DD
+const todayStr = computed(() => {
+    return new Date().toISOString().split('T')[0];
+});
+
+function isTaskToday(task) {
+    if (!task.due_date) return false;
+    return task.due_date === todayStr.value;
+}
+
+function isTaskOverdue(task) {
+    if (!task.due_date) return false;
+    if (task.status === 'done') {
+        if (task.completed_at) {
+            return task.completed_at.split('T')[0] > task.due_date;
+        }
+        return false;
+    }
+    return task.due_date < todayStr.value;
+}
+
+function getDelayDurationDays(task) {
+    if (!task.due_date) return 0;
+    const due = new Date(task.due_date);
+    const end = task.status === 'done' && task.completed_at ? new Date(task.completed_at) : new Date();
+    const diff = Math.floor((end - due) / (1000 * 60 * 60 * 24));
+    return diff > 0 ? diff : 0;
+}
+
+// Local reactive tasks for optimistic updates
+const localTasks = ref([...props.tasks]);
+
+watch(() => props.tasks, (newTasks) => {
+    localTasks.value = [...newTasks];
+}, { deep: true });
+
+// Check if a task belongs to a specific user
+function taskBelongsToUser(task, userId) {
+    if (task.assigned_to === userId || task.created_by === userId) return true;
+    if (task.assignees && task.assignees.some(a => a.id === userId)) return true;
+    return false;
+}
+
+// Filtered tasks based on Member Selector on top
+const memberScopedTasks = computed(() => {
+    // If not a team lead / admin, staff can ONLY see their own tasks
+    if (!isActualTeamLead.value) {
+        return localTasks.value.filter(t => taskBelongsToUser(t, props.currentAgent.id));
+    }
+
+    // Team lead can select from top:
+    if (selectedMember.value === 'me') {
+        // Initially sees his own task!
+        return localTasks.value.filter(t => taskBelongsToUser(t, props.currentAgent.id));
+    } else if (selectedMember.value === 'all') {
+        // All members' tasks
+        return localTasks.value;
+    } else {
+        // Specific member chosen from top
+        const targetId = Number(selectedMember.value);
+        return localTasks.value.filter(t => taskBelongsToUser(t, targetId));
+    }
+});
+
+// Final filtered tasks applied to Kanban columns
 const filteredTasks = computed(() => {
-    return props.tasks.filter((t) => {
+    return memberScopedTasks.value.filter((t) => {
+        // Today's data filter
+        if (dateFilter.value === 'today' && !isTaskToday(t)) {
+            return false;
+        }
         if (filterPriority.value !== 'all' && t.priority !== filterPriority.value) {
             return false;
         }
         if (filterProject.value !== 'all' && String(t.project_id) !== String(filterProject.value)) {
             return false;
-        }
-        if (filterTimeStatus.value === 'overtime') {
-            if (!t.approximate_hours || !t.completed_hours || t.completed_hours <= t.approximate_hours) return false;
-        } else if (filterTimeStatus.value === 'ontrack') {
-            if (!t.approximate_hours || !t.completed_hours || t.completed_hours > t.approximate_hours) return false;
         }
         if (searchQuery.value) {
             const q = searchQuery.value.toLowerCase();
@@ -77,23 +161,193 @@ const filteredTasks = computed(() => {
 });
 
 const columns = [
-    { key: 'todo', label: 'To Do', color: 'bg-slate-100 text-slate-700 border-slate-300' },
-    { key: 'in_progress', label: 'In Progress', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-    { key: 'review', label: 'Review', color: 'bg-amber-50 text-amber-700 border-amber-200' },
-    { key: 'done', label: 'Completed', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+    { key: 'todo', label: 'To Do', color: 'border-slate-300 text-slate-700 bg-slate-50', badge: 'bg-slate-200 text-slate-700' },
+    { key: 'in_progress', label: 'In Progress', color: 'border-blue-300 text-blue-700 bg-blue-50/40', badge: 'bg-blue-100 text-blue-700' },
+    { key: 'review', label: 'Review', color: 'border-amber-300 text-amber-700 bg-amber-50/40', badge: 'bg-amber-100 text-amber-700' },
+    { key: 'done', label: 'Completed', color: 'border-emerald-300 text-emerald-700 bg-emerald-50/40', badge: 'bg-emerald-100 text-emerald-700' },
 ];
 
 function getTasksByStatus(status) {
-    return filteredTasks.value.filter((t) => t.status === status);
+    return filteredTasks.value.filter(t => t.status === status);
 }
 
-// Metrics
-const totalCount = computed(() => props.tasks.length);
-const inProgressCount = computed(() => props.tasks.filter((t) => t.status === 'in_progress').length);
-const doneCount = computed(() => props.tasks.filter((t) => t.status === 'done').length);
-const overtimeTasks = computed(() => props.tasks.filter((t) => t.approximate_hours > 0 && t.completed_hours > t.approximate_hours));
+// Counts for the top bar
+const todayTasksCount = computed(() => memberScopedTasks.value.filter(t => isTaskToday(t)).length);
+const totalVisibleCount = computed(() => filteredTasks.value.length);
 
-// Create Task Modal State
+// Selected member's display name
+const selectedMemberName = computed(() => {
+    if (selectedMember.value === 'me') return 'My Own Tasks';
+    if (selectedMember.value === 'all') return 'All Team Members';
+    const member = props.staffAgents.find(a => String(a.id) === String(selectedMember.value));
+    return member ? `${member.name}'s Tasks` : 'Member Tasks';
+});
+
+// =========================================================
+// 2. DRAG AND DROP STATUS UPDATES (NO SELECT DROPDOWN NEEDED)
+// "he drap the trask from pending to review drop ok"
+// Team lead can edit status of member tasks and his own. Staff can update own.
+// =========================================================
+const draggedTask = ref(null);
+const dragOverColumn = ref(null);
+
+function handleDragStart(task, event) {
+    draggedTask.value = task;
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', String(task.id));
+}
+
+function handleDragEnd() {
+    draggedTask.value = null;
+    dragOverColumn.value = null;
+}
+
+function handleDragOver(colKey, event) {
+    event.preventDefault();
+    if (draggedTask.value) {
+        dragOverColumn.value = colKey;
+        event.dataTransfer.dropEffect = 'move';
+    }
+}
+
+function handleDragLeave(colKey) {
+    if (dragOverColumn.value === colKey) {
+        dragOverColumn.value = null;
+    }
+}
+
+function handleDrop(colKey, event) {
+    event.preventDefault();
+    const task = draggedTask.value;
+    dragOverColumn.value = null;
+    draggedTask.value = null;
+
+    if (!task || task.status === colKey) return;
+
+    // Optimistic instantaneous move: "drap the trask from pending to review drop ok"
+    const prevStatus = task.status;
+    task.status = colKey;
+    const localIdx = localTasks.value.findIndex(t => t.id === task.id);
+    if (localIdx > -1) {
+        localTasks.value[localIdx].status = colKey;
+    }
+
+    // Backend PATCH to update status
+    router.patch(`/tasks/${task.id}`, { 
+        status: colKey,
+        completion_remarks: colKey === 'done' ? (task.completion_remarks || 'Completed via task board.') : null
+    }, {
+        preserveScroll: true,
+        preserveState: true,
+        onError: () => {
+            // Revert if error
+            task.status = prevStatus;
+            if (localIdx > -1) localTasks.value[localIdx].status = prevStatus;
+        }
+    });
+}
+
+// =========================================================
+// DELAY REASON & HIERARCHICAL REASON LOCK MODAL
+// =========================================================
+const isDelayModalOpen = ref(false);
+const delayTask = ref(null);
+const delayForm = ref({
+    delay_category: 'Client Blocker',
+    delay_reason: '',
+    action: 'submit',
+});
+const delayError = ref('');
+
+const delayCategories = [
+    'Client Blocker',
+    'Resource Dependency',
+    'Scope Creep',
+    'Technical Complexity',
+    'External Dependency',
+    'Infrastructure / Environment Issue',
+    'Other'
+];
+
+const isDelayLockedForCurrentRole = computed(() => {
+    if (!delayTask.value) return false;
+    // If locked by lead AND user is not team lead/admin -> disabled
+    if (!isActualTeamLead.value && delayTask.value.delay_status === 'finalized_by_lead') {
+        return true;
+    }
+    return false;
+});
+
+function openDelayModal(task) {
+    delayTask.value = task;
+    delayError.value = '';
+    delayForm.value = {
+        delay_category: task.delay_category || 'Client Blocker',
+        delay_reason: task.delay_reason || '',
+        action: 'submit',
+    };
+    isDelayModalOpen.value = true;
+}
+
+function submitDelayReason(actionType = 'submit') {
+    if (!delayTask.value) return;
+    if (isDelayLockedForCurrentRole.value) {
+        delayError.value = 'This delay explanation has been finalized and permanently locked by the Team Lead.';
+        return;
+    }
+    if (!delayForm.value.delay_reason || delayForm.value.delay_reason.length < 5) {
+        delayError.value = 'Please provide an explanation note (minimum 5 characters).';
+        return;
+    }
+
+    delayForm.value.action = actionType;
+    const task = delayTask.value;
+    const isFinalize = isActualTeamLead.value && actionType === 'finalize';
+    const newStatus = isFinalize ? 'finalized_by_lead' : 'awaiting_lead_review';
+
+    const newRevision = {
+        user_id: props.currentAgent.id,
+        user_name: props.currentAgent.name,
+        user_role: isActualTeamLead.value ? 'Team Lead' : 'Staff',
+        action: isFinalize ? 'Finalized & Locked by Lead' : (isActualTeamLead.value ? 'Reviewed & Updated by Lead' : 'Submitted by Staff'),
+        category: delayForm.value.delay_category,
+        note: delayForm.value.delay_reason,
+        timestamp: new Date().toISOString(),
+    };
+
+    const revisions = Array.isArray(task.delay_revisions) ? [...task.delay_revisions, newRevision] : [newRevision];
+
+    task.delay_category = delayForm.value.delay_category;
+    task.delay_reason = delayForm.value.delay_reason;
+    task.delay_status = newStatus;
+    task.delay_revisions = revisions;
+    if (isFinalize) {
+        task.delay_locked_by = props.currentAgent.id;
+        task.delay_locked_at = new Date().toISOString();
+        task.delay_locked_by_user = { id: props.currentAgent.id, name: props.currentAgent.name };
+    }
+
+    router.post(`/tasks/${task.id}/delay-reason`, {
+        delay_category: delayForm.value.delay_category,
+        delay_reason: delayForm.value.delay_reason,
+        action: actionType,
+    }, {
+        preserveScroll: true,
+        preserveState: true,
+        onSuccess: () => {
+            isDelayModalOpen.value = false;
+        },
+        onError: (errors) => {
+            if (errors.delay_reason) {
+                delayError.value = errors.delay_reason;
+            }
+        }
+    });
+}
+
+// =========================================================
+// CREATE TASK MODAL
+// =========================================================
 const isModalOpen = ref(false);
 const taskForm = ref({
     title: '',
@@ -106,9 +360,12 @@ const taskForm = ref({
     assignee_ids: [],
     due_date: '',
 });
+const taskErrors = ref({});
 const isSubmitting = ref(false);
 
 function openNewTaskModal(status = 'todo') {
+    taskErrors.value = {};
+    const defaultAssignee = props.currentAgent.id;
     taskForm.value = {
         title: '',
         description: '',
@@ -117,8 +374,8 @@ function openNewTaskModal(status = 'todo') {
         status,
         priority: 'medium',
         approximate_hours: 4,
-        assignee_ids: [props.currentAgent.id],
-        due_date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
+        assignee_ids: [defaultAssignee],
+        due_date: new Date().toISOString().split('T')[0],
     };
     isModalOpen.value = true;
 }
@@ -131,6 +388,7 @@ function onProjectChange() {
 }
 
 function toggleAssignee(userId) {
+    if (!isActualTeamLead.value) return; // Staff creates for self only
     const idx = taskForm.value.assignee_ids.indexOf(userId);
     if (idx > -1) {
         taskForm.value.assignee_ids.splice(idx, 1);
@@ -140,7 +398,20 @@ function toggleAssignee(userId) {
 }
 
 function submitTask() {
-    if (!taskForm.value.title) return;
+    taskErrors.value = {};
+    if (!taskForm.value.title || taskForm.value.title.trim().length < 3) {
+        taskErrors.value.title = 'Title must be at least 3 characters.';
+    }
+    if (!taskForm.value.due_date) {
+        taskErrors.value.due_date = 'Due date deadline is required.';
+    }
+
+    if (Object.keys(taskErrors.value).length > 0) return;
+
+    const assignees = isActualTeamLead.value 
+        ? (taskForm.value.assignee_ids.length ? taskForm.value.assignee_ids : [props.currentAgent.id])
+        : [props.currentAgent.id];
+
     isSubmitting.value = true;
     router.post('/tasks', {
         title: taskForm.value.title,
@@ -150,7 +421,7 @@ function submitTask() {
         status: taskForm.value.status,
         priority: taskForm.value.priority,
         approximate_hours: taskForm.value.approximate_hours ? Number(taskForm.value.approximate_hours) : 0,
-        assignee_ids: canAssignOthers.value ? taskForm.value.assignee_ids : [props.currentAgent.id],
+        assignee_ids: assignees,
         due_date: taskForm.value.due_date || null,
     }, {
         preserveScroll: true,
@@ -159,51 +430,6 @@ function submitTask() {
             isModalOpen.value = false;
         },
     });
-}
-
-// Completion Remarks Modal
-const isCompleteModalOpen = ref(false);
-const completingTask = ref(null);
-const completeForm = ref({
-    completed_hours: 0,
-    completion_remarks: '',
-});
-
-function openCompletionModal(task) {
-    completingTask.value = task;
-    completeForm.value = {
-        completed_hours: task.completed_hours || task.approximate_hours || 1,
-        completion_remarks: task.completion_remarks || '',
-    };
-    isCompleteModalOpen.value = true;
-}
-
-function submitCompletion() {
-    if (!completingTask.value || !completeForm.value.completion_remarks) return;
-    isSubmitting.value = true;
-    router.patch(`/tasks/${completingTask.value.id}`, {
-        status: 'done',
-        completed_hours: Number(completeForm.value.completed_hours) || 0,
-        completion_remarks: completeForm.value.completion_remarks,
-    }, {
-        preserveScroll: true,
-        onFinish: () => {
-            isSubmitting.value = false;
-            isCompleteModalOpen.value = false;
-            completingTask.value = null;
-        },
-    });
-}
-
-function handleStatusSelect(task, newStatus) {
-    if (newStatus === 'done') {
-        openCompletionModal(task);
-    } else {
-        router.patch(`/tasks/${task.id}`, { status: newStatus }, {
-            preserveScroll: true,
-            preserveState: true,
-        });
-    }
 }
 
 function deleteTask(task) {
@@ -215,122 +441,173 @@ function deleteTask(task) {
     }
 }
 
-function calculateRatio(task) {
-    if (!task.approximate_hours || task.approximate_hours <= 0 || task.completed_hours === null || task.completed_hours === undefined) {
-        return null;
-    }
-    return (task.completed_hours / task.approximate_hours);
-}
+// Quick View Task Modal
+const previewTask = ref(null);
 
 function priorityBadge(p) {
     switch (p) {
         case 'high':
-            return 'bg-rose-50 text-rose-700 border border-rose-200';
+            return 'bg-rose-50 text-rose-700 border-rose-200';
         case 'medium':
-            return 'bg-amber-50 text-amber-700 border border-amber-200';
+            return 'bg-amber-50 text-amber-700 border-amber-200';
         case 'low':
-            return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+            return 'bg-emerald-50 text-emerald-700 border-emerald-200';
         default:
-            return 'bg-slate-100 text-slate-600 border border-slate-200';
+            return 'bg-slate-100 text-slate-600 border-slate-200';
     }
 }
 </script>
 
 <template>
-    <div class="flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
-        <!-- Top Action Bar & Metrics -->
-        <div class="px-6 py-4 bg-white border-b border-slate-200 shrink-0">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                    <div class="flex items-center space-x-2">
-                        <CheckSquare class="w-5 h-5 text-indigo-600" />
-                        <h2 class="text-lg font-bold text-slate-900">Work Status & Tasks</h2>
-                        <span v-if="isTeamLead" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 flex items-center space-x-1">
-                            <ShieldCheck class="w-3 h-3" />
-                            <span>Team Lead</span>
-                        </span>
-                        <span v-else-if="!isCustomer" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
-                            Team Member
+    <!-- OVERVIEW DASHBOARD & ALL DETAILS (DISPLAYED WHEN USER CLICKS BUTTON ON TOP) -->
+    <WorkStatusDetailedDashboard
+        v-if="currentView === 'overview'"
+        :tasks="memberScopedTasks"
+        :all-tasks="tasks"
+        :projects="projects"
+        :staff-agents="staffAgents"
+        :current-agent="currentAgent"
+        :is-lead-mode="isActualTeamLead"
+        @switch-to-kanban="currentView = 'workspace'"
+        @open-new-task="openNewTaskModal('todo')"
+        @open-delay-modal="openDelayModal"
+    />
+
+    <!-- MAIN CLEAN TASK WORKSPACE: NO TOP DASHBOARD CLUTTER -->
+    <div v-else class="flex-1 flex flex-col h-full overflow-hidden bg-slate-50">
+        <!-- TOP STREAMLINED CONTROL BAR -->
+        <div class="px-5 py-3 bg-white border-b border-slate-200 shrink-0 shadow-2xs">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
+                <!-- Left: Title + Member Selection for Team Lead + Today's Data -->
+                <div class="flex items-center space-x-2.5 flex-wrap gap-y-2">
+                    <div class="flex items-center space-x-1.5 mr-1">
+                        <CheckSquare class="w-4 h-4 text-indigo-600" />
+                        <h2 class="text-sm font-bold text-slate-900 whitespace-nowrap">Task Board</h2>
+                        <span v-if="isActualTeamLead" class="px-2 py-0.2 rounded-full text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            Team Lead
                         </span>
                     </div>
-                    <p class="text-xs text-slate-500 mt-0.5">
-                        Track projects, clients, approximate vs completed hours ratio, and completion remarks.
-                    </p>
+
+                    <!-- 1. TEAM LEAD MEMBER SELECTOR (INITIAL: OWN TASKS, SELECT OTHERS FROM TOP) -->
+                    <div v-if="isActualTeamLead" class="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200 text-xs font-semibold">
+                        <!-- Button: My Tasks (Initially selected by default!) -->
+                        <button
+                            @click="selectedMember = 'me'"
+                            :class="[
+                                'px-2.5 py-1 rounded-lg flex items-center space-x-1 transition-all',
+                                selectedMember === 'me'
+                                    ? 'bg-white text-indigo-700 font-bold shadow-2xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                            ]"
+                            title="View your own assigned tasks"
+                        >
+                            <User class="w-3.5 h-3.5 text-indigo-600" />
+                            <span>My Tasks</span>
+                        </button>
+
+                        <!-- Button: All Team Tasks -->
+                        <button
+                            @click="selectedMember = 'all'"
+                            :class="[
+                                'px-2.5 py-1 rounded-lg flex items-center space-x-1 transition-all',
+                                selectedMember === 'all'
+                                    ? 'bg-white text-indigo-700 font-bold shadow-2xs'
+                                    : 'text-slate-600 hover:text-slate-900'
+                            ]"
+                            title="View all team members' tasks"
+                        >
+                            <Users class="w-3.5 h-3.5 text-indigo-600" />
+                            <span>All Team</span>
+                        </button>
+
+                        <!-- Dropdown to select ANY other team member from top -->
+                        <div class="flex items-center pl-1 border-l border-slate-200/80">
+                            <select
+                                v-model="selectedMember"
+                                class="bg-transparent text-xs font-semibold text-slate-700 px-2 py-1 rounded-lg focus:outline-none cursor-pointer"
+                                title="Select a specific team member to view their tasks"
+                            >
+                                <option value="me">👤 View: My Own Tasks</option>
+                                <option value="all">👥 View: All Team Members ({{ staffAgents.length }})</option>
+                                <optgroup label="Select Team Member:">
+                                    <option v-for="agent in staffAgents" :key="agent.id" :value="String(agent.id)">
+                                        {{ agent.name }} ({{ agent.member_id || agent.role }})
+                                    </option>
+                                </optgroup>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Employee scope indicator if normal staff -->
+                    <div v-else class="flex items-center space-x-1 text-xs font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                        <User class="w-3.5 h-3.5 text-slate-500" />
+                        <span>My Tasks ({{ currentAgent.name }})</span>
+                    </div>
+
+                    <!-- 3. EVERYONE CAN SEE TODAY'S DATA TOGGLE -->
+                    <div class="flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200 text-xs font-semibold">
+                        <button
+                            @click="dateFilter = 'all'"
+                            :class="[
+                                'px-2.5 py-1 rounded-lg transition-all',
+                                dateFilter === 'all' ? 'bg-white text-indigo-700 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                            ]"
+                        >
+                            All Tasks
+                        </button>
+                        <button
+                            @click="dateFilter = 'today'"
+                            :class="[
+                                'px-2.5 py-1 rounded-lg flex items-center space-x-1 transition-all',
+                                dateFilter === 'today' ? 'bg-white text-indigo-700 font-bold shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                            ]"
+                            title="Filter tasks due or active today"
+                        >
+                            <Calendar class="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Today's Data</span>
+                            <span v-if="todayTasksCount > 0" class="px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-indigo-100 text-indigo-800">
+                                {{ todayTasksCount }}
+                            </span>
+                        </button>
+                    </div>
                 </div>
 
+                <!-- Right: Prominent Overview Button & Create Task -->
                 <div class="flex items-center space-x-2">
+                    <!-- BUTTON FOR OVERVIEW: SHOW ALL DETAILS & OVERVIEW OF TASKS -->
+                    <button
+                        @click="currentView = 'overview'"
+                        class="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold flex items-center space-x-1.5 transition-all shadow-2xs hover:shadow-xs"
+                        title="Display full overview, all details, late ratios, and analytics"
+                    >
+                        <BarChart3 class="w-4 h-4 text-indigo-600" />
+                        <span>Overview & All Details</span>
+                        <ArrowUpRight class="w-3.5 h-3.5 text-indigo-500" />
+                    </button>
+
                     <button
                         @click="openNewTaskModal('todo')"
-                        class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs flex items-center space-x-1.5 transition-colors"
+                        class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs flex items-center space-x-1.5 transition-colors"
                     >
                         <Plus class="w-3.5 h-3.5" />
-                        <span>Create Task</span>
+                        <span>New Task</span>
                     </button>
                 </div>
             </div>
 
-            <!-- Summary Cards with Ratio Analysis -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-                <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between">
-                    <div>
-                        <span class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Tasks</span>
-                        <div class="text-lg font-bold text-slate-800">{{ totalCount }}</div>
-                    </div>
-                    <div class="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-600">
-                        <CheckSquare class="w-4 h-4" />
-                    </div>
-                </div>
+            <!-- Compact Sub-bar: Project filter, priority filter, search -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100 text-xs">
+                <div class="flex items-center space-x-2 flex-wrap gap-y-1">
+                    <span class="text-slate-500 text-[11px] font-medium">
+                        Showing: <strong class="text-slate-800">{{ selectedMemberName }}</strong> ({{ totalVisibleCount }} tasks)
+                    </span>
 
-                <div class="p-3 bg-blue-50/50 border border-blue-200/80 rounded-xl flex items-center justify-between">
-                    <div>
-                        <span class="text-[11px] font-medium text-blue-600 uppercase tracking-wider">In Progress</span>
-                        <div class="text-lg font-bold text-blue-800">{{ inProgressCount }}</div>
-                    </div>
-                    <div class="w-8 h-8 rounded-lg bg-blue-100/60 text-blue-700 flex items-center justify-center">
-                        <TrendingUp class="w-4 h-4" />
-                    </div>
-                </div>
-
-                <div class="p-3 bg-emerald-50/50 border border-emerald-200/80 rounded-xl flex items-center justify-between">
-                    <div>
-                        <span class="text-[11px] font-medium text-emerald-600 uppercase tracking-wider">Completed</span>
-                        <div class="text-lg font-bold text-emerald-800">{{ doneCount }}</div>
-                    </div>
-                    <div class="w-8 h-8 rounded-lg bg-emerald-100/60 text-emerald-700 flex items-center justify-center">
-                        <CheckCircle2 class="w-4 h-4" />
-                    </div>
-                </div>
-
-                <!-- Overtime Tasks Ratio Metric -->
-                <div 
-                    :class="[
-                        'p-3 border rounded-xl flex items-center justify-between',
-                        overtimeTasks.length > 0 ? 'bg-rose-50/60 border-rose-200' : 'bg-slate-50 border-slate-200'
-                    ]"
-                >
-                    <div>
-                        <span :class="['text-[11px] font-medium uppercase tracking-wider', overtimeTasks.length > 0 ? 'text-rose-600 font-bold' : 'text-slate-500']">
-                            Overtime Ratio
-                        </span>
-                        <div :class="['text-lg font-bold', overtimeTasks.length > 0 ? 'text-rose-700' : 'text-slate-800']">
-                            {{ overtimeTasks.length }} tasks
-                        </div>
-                    </div>
-                    <div :class="['w-8 h-8 rounded-lg flex items-center justify-center', overtimeTasks.length > 0 ? 'bg-rose-100 text-rose-700' : 'bg-white border border-slate-200 text-slate-600']">
-                        <AlertTriangle class="w-4 h-4" />
-                    </div>
-                </div>
-            </div>
-
-            <!-- Filters & Search -->
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mt-4">
-                <div class="flex items-center space-x-2 flex-wrap gap-y-2">
                     <!-- Project Filter -->
-                    <div class="flex items-center space-x-1 text-xs">
-                        <span class="text-slate-500 text-[11px]">Project:</span>
+                    <div class="flex items-center space-x-1 ml-2">
+                        <span class="text-slate-400 text-[11px]">Project:</span>
                         <select
                             v-model="filterProject"
-                            class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
+                            class="px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none"
                         >
                             <option value="all">All Projects</option>
                             <option v-for="p in projects" :key="p.id" :value="p.id">
@@ -340,56 +617,61 @@ function priorityBadge(p) {
                     </div>
 
                     <!-- Priority Filter -->
-                    <div class="flex items-center space-x-1 text-xs">
-                        <span class="text-slate-500 text-[11px]">Priority:</span>
+                    <div class="flex items-center space-x-1">
+                        <span class="text-slate-400 text-[11px]">Priority:</span>
                         <select
                             v-model="filterPriority"
-                            class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
+                            class="px-2 py-0.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none"
                         >
-                            <option value="all">All</option>
-                            <option value="high">High</option>
-                            <option value="medium">Medium</option>
-                            <option value="low">Low</option>
-                        </select>
-                    </div>
-
-                    <!-- Time Ratio Filter -->
-                    <div class="flex items-center space-x-1 text-xs">
-                        <span class="text-slate-500 text-[11px]">Ratio:</span>
-                        <select
-                            v-model="filterTimeStatus"
-                            class="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-indigo-500"
-                        >
-                            <option value="all">All Times</option>
-                            <option value="overtime">⚠️ Overtime (Ratio > 1.0)</option>
-                            <option value="ontrack">✅ On Time (Ratio ≤ 1.0)</option>
+                            <option value="all">All Priorities</option>
+                            <option value="high">🔴 High</option>
+                            <option value="medium">🟡 Medium</option>
+                            <option value="low">🟢 Low</option>
                         </select>
                     </div>
                 </div>
 
-                <input
-                    v-model="searchQuery"
-                    type="text"
-                    placeholder="Search by title, project, client or assignee..."
-                    class="w-full sm:w-64 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600"
-                />
+                <div class="relative w-full sm:w-60">
+                    <input
+                        v-model="searchQuery"
+                        type="text"
+                        placeholder="Search tasks..."
+                        class="w-full px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600"
+                    />
+                    <button v-if="searchQuery" @click="searchQuery = ''" class="absolute right-2 top-1 text-slate-400 hover:text-slate-600">
+                        <X class="w-3 h-3" />
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- Kanban Board Columns -->
-        <div class="flex-1 p-6 overflow-x-auto overflow-y-hidden">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 h-full min-w-[1000px]">
+        <!-- ============================================================= -->
+        <!-- DRAG AND DROP KANBAN BOARD                                    -->
+        <!-- "stadff or all can update statuyse using drag and drop not    -->
+        <!-- need select then update, he drap the trask from pending to    -->
+        <!-- review drop ok"                                               -->
+        <!-- ============================================================= -->
+        <div class="flex-1 p-4 overflow-x-auto overflow-y-hidden">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-3.5 h-full min-w-[960px]">
                 <div
                     v-for="col in columns"
                     :key="col.key"
-                    class="flex flex-col bg-slate-100/80 rounded-2xl border border-slate-200 overflow-hidden h-full"
+                    @dragover="handleDragOver(col.key, $event)"
+                    @dragleave="handleDragLeave(col.key)"
+                    @drop="handleDrop(col.key, $event)"
+                    :class="[
+                        'flex flex-col rounded-2xl border transition-all duration-200 overflow-hidden h-full',
+                        dragOverColumn === col.key
+                            ? 'border-2 border-dashed border-indigo-500 bg-indigo-50/70 shadow-lg scale-[1.01]'
+                            : 'border-slate-200 bg-slate-100/70'
+                    ]"
                 >
                     <!-- Column Header -->
-                    <div class="px-3.5 py-3 border-b border-slate-200 bg-white flex items-center justify-between">
+                    <div class="px-3.5 py-2.5 border-b border-slate-200 bg-white flex items-center justify-between">
                         <div class="flex items-center space-x-2">
                             <span :class="['w-2.5 h-2.5 rounded-full', col.key === 'done' ? 'bg-emerald-500' : col.key === 'in_progress' ? 'bg-blue-500' : col.key === 'review' ? 'bg-amber-500' : 'bg-slate-400']"></span>
                             <span class="text-xs font-bold text-slate-800">{{ col.label }}</span>
-                            <span class="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 text-[10px] font-mono font-bold">
+                            <span :class="['px-2 py-0.2 rounded-full text-[10px] font-mono font-bold', col.badge]">
                                 {{ getTasksByStatus(col.key).length }}
                             </span>
                         </div>
@@ -403,87 +685,119 @@ function priorityBadge(p) {
                     </div>
 
                     <!-- Column Cards Stream -->
-                    <div class="flex-1 p-2.5 space-y-2.5 overflow-y-auto">
+                    <div class="flex-1 p-2 space-y-2 overflow-y-auto">
+                        <!-- Active Drag Drop Zone Indicator -->
+                        <div
+                            v-if="dragOverColumn === col.key"
+                            class="py-3 px-2 text-center text-indigo-700 font-bold text-xs bg-indigo-100/70 border-2 border-dashed border-indigo-400 rounded-xl animate-pulse"
+                        >
+                            + Drop task in {{ col.label }}
+                        </div>
+
+                        <!-- STREAMLINED TASK CARD: NO SELECT DROPDOWN (DRAG & DROP ONLY) -->
                         <div
                             v-for="task in getTasksByStatus(col.key)"
                             :key="task.id"
-                            class="p-3 bg-white rounded-xl border border-slate-200 shadow-xs hover:border-slate-300 transition-all flex flex-col space-y-2.5"
+                            draggable="true"
+                            @dragstart="handleDragStart(task, $event)"
+                            @dragend="handleDragEnd"
+                            :class="[
+                                'p-3 bg-white rounded-xl border transition-all flex flex-col space-y-2 cursor-grab active:cursor-grabbing select-none hover:shadow-xs group',
+                                isTaskOverdue(task) ? 'border-rose-300 ring-1 ring-rose-200/60 shadow-2xs' : 'border-slate-200 hover:border-indigo-300 shadow-2xs',
+                                draggedTask?.id === task.id ? 'opacity-30 border-dashed border-indigo-400 scale-95' : ''
+                            ]"
                         >
-                            <!-- Project & Client Tags -->
-                            <div class="flex items-center justify-between text-[10px] text-slate-500">
-                                <span v-if="task.project" class="inline-flex items-center space-x-1 font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 truncate max-w-[140px]">
+                            <!-- Top: Project Badge + Priority + Overdue/Today Badges -->
+                            <div class="flex items-center justify-between text-[10px]">
+                                <span
+                                    v-if="task.project"
+                                    class="inline-flex items-center space-x-1 font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100 truncate max-w-[130px]"
+                                    :title="task.project.name"
+                                >
                                     <Briefcase class="w-2.5 h-2.5 shrink-0" />
                                     <span class="truncate">{{ task.project.name }}</span>
                                 </span>
-                                <span v-else class="text-slate-400">No Project</span>
+                                <span v-else class="text-slate-400 text-[10px]">General</span>
 
-                                <span v-if="task.client" class="text-slate-600 truncate max-w-[100px] flex items-center space-x-0.5" :title="'Client: ' + task.client.name">
-                                    <Building class="w-2.5 h-2.5 text-slate-400" />
-                                    <span class="truncate">{{ task.client.name }}</span>
-                                </span>
+                                <div class="flex items-center space-x-1">
+                                    <!-- Today Badge -->
+                                    <span
+                                        v-if="isTaskToday(task)"
+                                        class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200"
+                                        title="Due Today!"
+                                    >
+                                        Today
+                                    </span>
+
+                                    <!-- Overdue Badge -->
+                                    <span
+                                        v-if="isTaskOverdue(task)"
+                                        class="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-600 text-white shadow-2xs flex items-center space-x-0.5"
+                                        title="Task is overdue!"
+                                    >
+                                        <AlertTriangle class="w-2.5 h-2.5" />
+                                        <span>Late</span>
+                                    </span>
+
+                                    <!-- Priority Badge -->
+                                    <span :class="['px-1.5 py-0.2 rounded text-[9px] font-bold uppercase shrink-0 border', priorityBadge(task.priority)]">
+                                        {{ task.priority }}
+                                    </span>
+                                </div>
                             </div>
 
-                            <!-- Title & Priority -->
+                            <!-- Title -->
                             <div class="flex items-start justify-between gap-1">
-                                <h4 class="text-xs font-bold text-slate-900 leading-snug">
+                                <h4
+                                    @click="previewTask = task"
+                                    class="text-xs font-bold text-slate-800 leading-snug hover:text-indigo-600 transition-colors cursor-pointer"
+                                    :title="task.title"
+                                >
                                     {{ task.title }}
                                 </h4>
-                                <span :class="['px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0', priorityBadge(task.priority)]">
-                                    {{ task.priority }}
-                                </span>
+                                <span class="text-slate-300 text-[10px] font-mono shrink-0">#{{ task.id }}</span>
                             </div>
 
                             <!-- Description -->
-                            <p v-if="task.description" class="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
+                            <p v-if="task.description" class="text-[11px] text-slate-500 line-clamp-1 leading-relaxed">
                                 {{ task.description }}
                             </p>
 
-                            <!-- Approximate Time & Completed Time Ratio -->
-                            <div class="p-2 rounded-lg bg-slate-50 border border-slate-200/80 text-[10px] space-y-1">
-                                <div class="flex items-center justify-between text-slate-600">
-                                    <span class="flex items-center space-x-1">
-                                        <Clock class="w-3 h-3 text-slate-400" />
-                                        <span>Approx: <strong>{{ task.approximate_hours || 0 }}h</strong></span>
+                            <!-- Delay Reason Box (If Overdue) -->
+                            <div v-if="isTaskOverdue(task)" class="p-2 rounded-lg bg-rose-50/70 border border-rose-200 text-xs space-y-1">
+                                <div class="flex items-center justify-between text-[10px]">
+                                    <span class="font-bold text-rose-800 flex items-center space-x-1">
+                                        <AlertCircle class="w-3 h-3 text-rose-600" />
+                                        <span>Delay: +{{ getDelayDurationDays(task) }}d</span>
                                     </span>
-                                    <span v-if="task.completed_hours !== null && task.completed_hours !== undefined">
-                                        Actual: <strong>{{ task.completed_hours }}h</strong>
+
+                                    <span v-if="task.delay_status === 'finalized_by_lead'" class="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-indigo-100 text-indigo-800 flex items-center space-x-0.5">
+                                        <Lock class="w-2.5 h-2.5" />
+                                        <span>Locked</span>
                                     </span>
-                                    <span v-else class="text-slate-400">
-                                        In Progress
+                                    <span v-else-if="task.delay_status === 'awaiting_lead_review'" class="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800">
+                                        Awaiting Lead
+                                    </span>
+                                    <span v-else class="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-rose-200 text-rose-900">
+                                        Reason Needed
                                     </span>
                                 </div>
 
-                                <!-- Time Ratio Indicator: which task take more time to approximate -->
-                                <div v-if="calculateRatio(task) !== null" class="pt-1 border-t border-slate-200/60 flex items-center justify-between">
-                                    <span class="font-medium text-slate-500">Ratio (Actual/Approx):</span>
-                                    <span 
-                                        :class="[
-                                            'px-1.5 py-0.2 rounded font-mono font-bold text-[9px]',
-                                            calculateRatio(task) > 1.0 
-                                                ? 'bg-rose-100 text-rose-700 border border-rose-200' 
-                                                : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
-                                        ]"
-                                    >
-                                        {{ calculateRatio(task).toFixed(2) }}x 
-                                        {{ calculateRatio(task) > 1.0 ? '(Overtime +' + Math.round((calculateRatio(task) - 1) * 100) + '%)' : '(On Track)' }}
-                                    </span>
+                                <div v-if="task.delay_category" class="text-[10px] text-rose-950 font-medium truncate">
+                                    <span class="font-bold">[{{ task.delay_category }}]</span> {{ task.delay_reason }}
                                 </div>
+
+                                <button
+                                    @click="openDelayModal(task)"
+                                    class="w-full text-center text-[10px] font-bold text-rose-700 bg-white hover:bg-rose-100/60 py-0.5 rounded border border-rose-200 transition-colors"
+                                >
+                                    {{ isActualTeamLead ? 'Review Delay Reason →' : (task.delay_status === 'finalized_by_lead' ? 'View Locked Reason' : 'Enter Delay Reason →') }}
+                                </button>
                             </div>
 
-                            <!-- Completion Remarks (Mandatory after complete) -->
-                            <div v-if="task.status === 'done' && task.completion_remarks" class="p-2 rounded-lg bg-emerald-50/60 border border-emerald-100 text-[11px] text-emerald-900">
-                                <div class="font-semibold text-[10px] uppercase text-emerald-800 flex items-center space-x-1 mb-0.5">
-                                    <CheckCircle2 class="w-3 h-3 text-emerald-600" />
-                                    <span>Completion Remarks:</span>
-                                </div>
-                                <p class="text-emerald-800 whitespace-pre-wrap leading-relaxed line-clamp-2">
-                                    {{ task.completion_remarks }}
-                                </p>
-                            </div>
-
-                            <!-- Multiple Assignees Display -->
-                            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-                                <div class="flex items-center space-x-1">
+                            <!-- Bottom Row: Assignees + Due Date + Drag Grip Indicator (NO SELECT DROPDOWN) -->
+                            <div class="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                                <div class="flex items-center space-x-1.5">
                                     <div class="flex -space-x-1.5 overflow-hidden">
                                         <template v-if="task.assignees && task.assignees.length > 0">
                                             <img
@@ -502,46 +816,48 @@ function priorityBadge(p) {
                                             />
                                         </template>
                                     </div>
-                                    <span class="text-[10px] text-slate-600 font-medium truncate max-w-[90px]">
+                                    <span class="text-[10px] text-slate-600 font-medium truncate max-w-[80px]">
                                         {{ task.assignees?.map(a => a.name.split(' ')[0]).join(', ') || task.assignee?.name || 'Unassigned' }}
                                     </span>
                                 </div>
 
-                                <div class="flex items-center space-x-1 text-[10px] text-slate-400" v-if="task.due_date">
-                                    <Calendar class="w-3 h-3 text-slate-400" />
-                                    <span>{{ task.due_date }}</span>
+                                <div class="flex items-center space-x-2">
+                                    <span v-if="task.due_date" :class="['text-[10px] flex items-center space-x-0.5', isTaskOverdue(task) ? 'text-rose-600 font-bold' : 'text-slate-400']">
+                                        <Calendar class="w-3 h-3" />
+                                        <span>{{ task.due_date.split('-').slice(1).join('/') }}</span>
+                                    </span>
+
+                                    <!-- Drag & Drop Handle (Clean visual feedback) -->
+                                    <div class="p-0.5 rounded text-slate-300 group-hover:text-slate-500 cursor-grab" title="Drag and drop to any column to change status">
+                                        <GripVertical class="w-3.5 h-3.5" />
+                                    </div>
+
+                                    <!-- Quick Actions -->
+                                    <button
+                                        @click="previewTask = task"
+                                        class="p-0.5 text-slate-400 hover:text-indigo-600"
+                                        title="View Details"
+                                    >
+                                        <Eye class="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        @click="deleteTask(task)"
+                                        class="p-0.5 text-slate-400 hover:text-rose-600"
+                                        title="Delete"
+                                    >
+                                        <Trash2 class="w-3.5 h-3.5" />
+                                    </button>
                                 </div>
-                            </div>
-
-                            <!-- Card Bottom Status Selector & Actions -->
-                            <div class="pt-1.5 flex items-center justify-between text-xs">
-                                <select
-                                    :value="task.status"
-                                    @change="handleStatusSelect(task, $event.target.value)"
-                                    class="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] font-medium text-slate-700 focus:outline-none focus:border-indigo-500 cursor-pointer"
-                                >
-                                    <option value="todo">To Do</option>
-                                    <option value="in_progress">In Progress</option>
-                                    <option value="review">Review</option>
-                                    <option value="done">Done (Add Remarks)</option>
-                                </select>
-
-                                <button
-                                    @click="deleteTask(task)"
-                                    class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors"
-                                    title="Delete task"
-                                >
-                                    <Trash2 class="w-3 h-3" />
-                                </button>
                             </div>
                         </div>
 
-                        <!-- Empty State -->
+                        <!-- Empty Column State -->
                         <div
-                            v-if="getTasksByStatus(col.key).length === 0"
+                            v-if="getTasksByStatus(col.key).length === 0 && dragOverColumn !== col.key"
                             class="py-8 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl"
                         >
-                            No tasks
+                            <span>No tasks</span>
+                            <div class="text-[10px] text-slate-400 mt-0.5">Drag tasks here</div>
                         </div>
                     </div>
                 </div>
@@ -549,7 +865,161 @@ function priorityBadge(p) {
         </div>
 
         <!-- ========================================================= -->
-        <!-- CREATE TASK MODAL (With Project, Client, Hours, Assignees)-->
+        <!-- DELAY REASON & HIERARCHICAL REASON LOCK MODAL             -->
+        <!-- ========================================================= -->
+        <div
+            v-if="isDelayModalOpen && delayTask"
+            class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs"
+        >
+            <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div class="flex items-center space-x-2">
+                        <AlertTriangle class="w-5 h-5 text-rose-600" />
+                        <div>
+                            <h3 class="text-sm font-bold text-slate-900">Delay Reason & Hierarchical Lock</h3>
+                            <div class="text-[10px] text-slate-500 font-mono">
+                                Task: {{ delayTask.title }} (Due: {{ delayTask.due_date }})
+                            </div>
+                        </div>
+                    </div>
+                    <button
+                        @click="isDelayModalOpen = false"
+                        class="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    >
+                        <X class="w-4 h-4" />
+                    </button>
+                </div>
+
+                <div v-if="delayError" class="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
+                    {{ delayError }}
+                </div>
+
+                <div
+                    v-if="delayTask.delay_status === 'finalized_by_lead'"
+                    class="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 space-y-1"
+                >
+                    <div class="font-bold flex items-center space-x-1.5 text-indigo-800">
+                        <Lock class="w-4 h-4 text-indigo-600" />
+                        <span>Finalized and Permanently Locked by Team Lead</span>
+                    </div>
+                    <p class="text-[11px] text-indigo-700 leading-relaxed">
+                        <template v-if="!isActualTeamLead">
+                            🔒 Confirmed by Team Lead <strong>{{ delayTask.delay_locked_by_user?.name || 'Lead' }}</strong>. As staff, editing is permanently disabled to preserve audit integrity.
+                        </template>
+                        <template v-else>
+                            🛡️ As a Team Lead, you have exclusive rights to review, modify, or override this locked delay explanation.
+                        </template>
+                    </p>
+                </div>
+
+                <form @submit.prevent="submitDelayReason('submit')" class="space-y-3 text-xs">
+                    <div class="space-y-1">
+                        <label class="font-bold text-slate-700 flex items-center justify-between">
+                            <span>Delay Category</span>
+                            <span class="text-rose-600 font-bold">* Required</span>
+                        </label>
+                        <select
+                            v-model="delayForm.delay_category"
+                            :disabled="isDelayLockedForCurrentRole"
+                            :class="[
+                                'w-full px-3 py-2 border rounded-xl text-slate-800 text-xs font-semibold focus:outline-none focus:border-indigo-600',
+                                isDelayLockedForCurrentRole ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-50 border-slate-200'
+                            ]"
+                        >
+                            <option v-for="cat in delayCategories" :key="cat" :value="cat">
+                                {{ cat }}
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="space-y-1">
+                        <label class="font-bold text-slate-700 flex items-center justify-between">
+                            <span>Delay Explanation Note</span>
+                            <span class="text-rose-600 font-bold">* Required</span>
+                        </label>
+                        <textarea
+                            v-model="delayForm.delay_reason"
+                            rows="3"
+                            :disabled="isDelayLockedForCurrentRole"
+                            placeholder="Detail why the deadline was missed, dependencies, client blockers, or mitigation steps taken..."
+                            :class="[
+                                'w-full px-3 py-2 border rounded-xl text-slate-800 text-xs focus:outline-none focus:border-indigo-600 resize-none leading-relaxed',
+                                isDelayLockedForCurrentRole ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-50 border-slate-200'
+                            ]"
+                        ></textarea>
+                    </div>
+
+                    <!-- Revision Log -->
+                    <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center space-x-1">
+                                <History class="w-3.5 h-3.5" />
+                                <span>Revision Audit Log</span>
+                            </span>
+                            <span class="text-[10px] text-slate-400 font-mono">
+                                {{ delayTask.delay_revisions?.length || 0 }} revision(s)
+                            </span>
+                        </div>
+
+                        <div class="max-h-24 overflow-y-auto bg-slate-50 rounded-xl p-2.5 border border-slate-200/80 space-y-2 text-[11px]">
+                            <template v-if="delayTask.delay_revisions && delayTask.delay_revisions.length > 0">
+                                <div
+                                    v-for="(rev, idx) in delayTask.delay_revisions.slice().reverse()"
+                                    :key="idx"
+                                    class="border-b border-slate-200/60 pb-1.5 last:border-b-0 last:pb-0"
+                                >
+                                    <div class="flex items-center justify-between text-[10px]">
+                                        <span class="font-bold text-slate-800">{{ rev.user_name }} ({{ rev.user_role }})</span>
+                                        <span class="text-slate-400 font-mono">{{ rev.timestamp ? new Date(rev.timestamp).toLocaleString() : 'Recent' }}</span>
+                                    </div>
+                                    <div class="text-indigo-700 font-semibold text-[10px] mt-0.5">
+                                        {{ rev.action }} • [{{ rev.category }}]
+                                    </div>
+                                    <p class="text-slate-600 text-[10px] line-clamp-2 mt-0.5">{{ rev.note }}</p>
+                                </div>
+                            </template>
+                            <div v-else class="text-center text-slate-400 py-1 text-[10px]">
+                                No prior revisions recorded.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-2 flex items-center justify-between border-t border-slate-100">
+                        <button
+                            type="button"
+                            @click="isDelayModalOpen = false"
+                            class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                        >
+                            Close
+                        </button>
+
+                        <div class="flex items-center space-x-2">
+                            <button
+                                v-if="isActualTeamLead"
+                                type="button"
+                                @click="submitDelayReason('finalize')"
+                                class="px-3.5 py-1.5 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white text-xs font-bold shadow-xs flex items-center space-x-1.5"
+                                title="Finalize and permanently lock for employees"
+                            >
+                                <Lock class="w-3.5 h-3.5" />
+                                <span>Finalize & Lock</span>
+                            </button>
+
+                            <button
+                                v-if="!isDelayLockedForCurrentRole"
+                                type="submit"
+                                class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs"
+                            >
+                                {{ isActualTeamLead ? 'Save Changes' : 'Submit for Review' }}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- ========================================================= -->
+        <!-- CREATE TASK MODAL                                         -->
         <!-- ========================================================= -->
         <div
             v-if="isModalOpen"
@@ -571,17 +1041,19 @@ function priorityBadge(p) {
 
                 <form @submit.prevent="submitTask" class="space-y-3 text-xs">
                     <div class="space-y-1">
-                        <label class="font-medium text-slate-700">Task Title</label>
+                        <label class="font-medium text-slate-700 flex items-center justify-between">
+                            <span>Task Title</span>
+                            <span v-if="taskErrors.title" class="text-rose-600 font-bold text-[10px]">{{ taskErrors.title }}</span>
+                        </label>
                         <input
                             v-model="taskForm.title"
                             type="text"
                             required
                             placeholder="e.g. Implement payment webhook callback retry"
-                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600"
+                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-600"
                         />
                     </div>
 
-                    <!-- Project & Client Selection -->
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
                             <label class="font-medium text-slate-700">Project</label>
@@ -616,8 +1088,8 @@ function priorityBadge(p) {
                         <textarea
                             v-model="taskForm.description"
                             rows="2"
-                            placeholder="Add task instructions and acceptance criteria..."
-                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-indigo-600 resize-none"
+                            placeholder="Task instructions..."
+                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 resize-none"
                         ></textarea>
                     </div>
 
@@ -626,7 +1098,7 @@ function priorityBadge(p) {
                             <label class="font-medium text-slate-700">Status</label>
                             <select
                                 v-model="taskForm.status"
-                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-600"
+                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                             >
                                 <option value="todo">To Do</option>
                                 <option value="in_progress">In Progress</option>
@@ -639,7 +1111,7 @@ function priorityBadge(p) {
                             <label class="font-medium text-slate-700">Priority</label>
                             <select
                                 v-model="taskForm.priority"
-                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-600"
+                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                             >
                                 <option value="low">🟢 Low</option>
                                 <option value="medium">🟡 Medium</option>
@@ -647,7 +1119,6 @@ function priorityBadge(p) {
                             </select>
                         </div>
 
-                        <!-- Approximate Time to Complete -->
                         <div class="space-y-1">
                             <label class="font-medium text-slate-700">Approx. Hours</label>
                             <input
@@ -655,25 +1126,20 @@ function priorityBadge(p) {
                                 type="number"
                                 step="0.5"
                                 min="0.5"
-                                placeholder="e.g. 4"
-                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-600"
+                                class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                             />
                         </div>
                     </div>
 
-                    <!-- Assign To Multiple Persons (Team Lead can assign to others, Employee creates own task) -->
                     <div class="space-y-1">
                         <div class="flex items-center justify-between">
-                            <label class="font-medium text-slate-700">
-                                Assign Task
-                            </label>
-                            <span v-if="!canAssignOthers" class="text-[10px] text-amber-600 font-medium">
-                                (Employee can create own task; only Team Lead can assign to others)
+                            <label class="font-medium text-slate-700">Assignee</label>
+                            <span v-if="!isActualTeamLead" class="text-[10px] text-amber-600 font-bold">
+                                Assigned to yourself
                             </span>
                         </div>
 
-                        <!-- If Team Lead / Admin: can assign to multiple people -->
-                        <div v-if="canAssignOthers" class="max-h-28 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                        <div v-if="isActualTeamLead" class="max-h-24 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
                             <div
                                 v-for="agent in staffAgents"
                                 :key="agent.id"
@@ -686,7 +1152,6 @@ function priorityBadge(p) {
                                 <div class="flex items-center space-x-2">
                                     <img :src="agent.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=50&h=50&fit=crop'" class="w-5 h-5 rounded-full object-cover" />
                                     <span>{{ agent.name }}</span>
-                                    <span class="text-[10px] text-slate-400 font-mono">({{ agent.member_id || 'Staff' }})</span>
                                 </div>
                                 <div
                                     :class="[
@@ -699,19 +1164,22 @@ function priorityBadge(p) {
                             </div>
                         </div>
 
-                        <!-- If normal employee: locked to themselves -->
-                        <div v-else class="p-2.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center space-x-2 text-xs text-slate-700">
+                        <div v-else class="p-2 bg-slate-100 rounded-xl border border-slate-200 flex items-center space-x-2 text-xs text-slate-700">
                             <img :src="currentAgent.avatar" class="w-5 h-5 rounded-full object-cover" />
-                            <span>{{ currentAgent.name }} (Assigned to You)</span>
+                            <span class="font-semibold">{{ currentAgent.name }} (Assigned to You)</span>
                         </div>
                     </div>
 
                     <div class="space-y-1">
-                        <label class="font-medium text-slate-700">Due Date</label>
+                        <label class="font-medium text-slate-700 flex items-center justify-between">
+                            <span>Due Date Deadline</span>
+                            <span v-if="taskErrors.due_date" class="text-rose-600 font-bold text-[10px]">{{ taskErrors.due_date }}</span>
+                        </label>
                         <input
                             v-model="taskForm.due_date"
                             type="date"
-                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-indigo-600"
+                            required
+                            class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                         />
                     </div>
 
@@ -719,14 +1187,14 @@ function priorityBadge(p) {
                         <button
                             type="button"
                             @click="isModalOpen = false"
-                            class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition-colors"
+                            class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
                             :disabled="isSubmitting"
-                            class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
+                            class="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs"
                         >
                             Create Task
                         </button>
@@ -736,82 +1204,90 @@ function priorityBadge(p) {
         </div>
 
         <!-- ========================================================= -->
-        <!-- COMPLETION REMARKS & ACTUAL TIME MODAL (MANDATORY)        -->
+        <!-- QUICK TASK PREVIEW MODAL                                  -->
         <!-- ========================================================= -->
         <div
-            v-if="isCompleteModalOpen && completingTask"
+            v-if="previewTask"
             class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs"
         >
             <div class="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
-                        <CheckCircle2 class="w-4 h-4 text-emerald-600" />
-                        <span>Complete Task & Add Remarks</span>
+                        <CheckSquare class="w-4 h-4 text-indigo-600" />
+                        <span>Task Details</span>
                     </h3>
                     <button
-                        @click="isCompleteModalOpen = false"
+                        @click="previewTask = null"
                         class="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                     >
                         <X class="w-4 h-4" />
                     </button>
                 </div>
 
-                <div class="text-xs text-slate-600">
-                    Task: <strong class="text-slate-900">{{ completingTask.title }}</strong>
+                <div class="space-y-3 text-xs">
+                    <div>
+                        <span class="text-[10px] font-bold uppercase text-slate-400">Title:</span>
+                        <div class="text-sm font-bold text-slate-900">{{ previewTask.title }}</div>
+                    </div>
+
+                    <div v-if="previewTask.description">
+                        <span class="text-[10px] font-bold uppercase text-slate-400">Description:</span>
+                        <p class="text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-200/80 whitespace-pre-wrap">
+                            {{ previewTask.description }}
+                        </p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                            <span class="text-[10px] text-slate-400 font-medium">Project</span>
+                            <div class="font-bold text-slate-800">{{ previewTask.project?.name || 'General' }}</div>
+                        </div>
+                        <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                            <span class="text-[10px] text-slate-400 font-medium">Priority & Status</span>
+                            <div class="font-bold text-slate-800 capitalize">{{ previewTask.priority }} • {{ previewTask.status }}</div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                            <span class="text-[10px] text-slate-400 font-medium">Due Date</span>
+                            <div :class="['font-bold', isTaskOverdue(previewTask) ? 'text-rose-600' : 'text-slate-800']">
+                                {{ previewTask.due_date || 'None' }}
+                            </div>
+                        </div>
+                        <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200">
+                            <span class="text-[10px] text-slate-400 font-medium">Approx. Hours</span>
+                            <div class="font-bold text-slate-800">{{ previewTask.approximate_hours || 0 }}h</div>
+                        </div>
+                    </div>
+
+                    <div v-if="isTaskOverdue(previewTask)" class="p-3 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
+                        <div class="font-bold text-rose-800 flex items-center justify-between">
+                            <span>Overdue: +{{ getDelayDurationDays(previewTask) }} days late</span>
+                            <span v-if="previewTask.delay_status === 'finalized_by_lead'" class="text-[10px] text-indigo-700 font-bold">🔒 Finalized by Lead</span>
+                        </div>
+                        <div v-if="previewTask.delay_category" class="text-xs text-rose-900">
+                            <strong>Category:</strong> {{ previewTask.delay_category }}
+                            <p class="mt-0.5 text-slate-700">{{ previewTask.delay_reason }}</p>
+                        </div>
+                    </div>
                 </div>
 
-                <form @submit.prevent="submitCompletion" class="space-y-3 text-xs">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                            <span class="text-[10px] text-slate-500 uppercase font-medium">Approx. Hours:</span>
-                            <div class="text-base font-bold text-slate-800">{{ completingTask.approximate_hours || 0 }}h</div>
-                        </div>
-
-                        <div class="space-y-1">
-                            <label class="font-medium text-slate-700">Actual Hours Taken</label>
-                            <input
-                                v-model.number="completeForm.completed_hours"
-                                type="number"
-                                step="0.25"
-                                min="0.25"
-                                required
-                                class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:border-emerald-600 font-bold"
-                            />
-                        </div>
-                    </div>
-
-                    <!-- Mandatory Remarks -->
-                    <div class="space-y-1">
-                        <label class="font-medium text-slate-700 flex items-center justify-between">
-                            <span>Completion Remarks (Mandatory)</span>
-                            <span class="text-[10px] text-rose-600 font-bold">* Required</span>
-                        </label>
-                        <textarea
-                            v-model="completeForm.completion_remarks"
-                            required
-                            rows="3"
-                            placeholder="Explain what was accomplished, deployment notes, or reasons for any time variance..."
-                            class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-emerald-600 resize-none leading-relaxed"
-                        ></textarea>
-                    </div>
-
-                    <div class="pt-2 flex items-center justify-end space-x-2">
-                        <button
-                            type="button"
-                            @click="isCompleteModalOpen = false"
-                            class="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            type="submit"
-                            :disabled="isSubmitting || !completeForm.completion_remarks"
-                            class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs transition-colors"
-                        >
-                            Confirm & Mark Done
-                        </button>
-                    </div>
-                </form>
+                <div class="pt-2 flex items-center justify-between border-t border-slate-100">
+                    <button
+                        v-if="isTaskOverdue(previewTask)"
+                        @click="openDelayModal(previewTask); previewTask = null;"
+                        class="text-xs font-bold text-indigo-600 hover:text-indigo-800"
+                    >
+                        Edit Delay Reason →
+                    </button>
+                    <button
+                        @click="previewTask = null"
+                        class="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold"
+                    >
+                        Close
+                    </button>
+                </div>
             </div>
         </div>
     </div>

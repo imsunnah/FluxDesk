@@ -66,6 +66,14 @@ class TaskController extends Controller
         $user = Auth::user();
         $isLeadOrAdmin = $user->is_team_lead || $user->is_admin;
 
+        $isOwnerOrAssignee = $task->assigned_to === $user->id 
+            || $task->created_by === $user->id 
+            || $task->assignees()->where('users.id', $user->id)->exists();
+
+        if (!$isLeadOrAdmin && !$isOwnerOrAssignee) {
+            abort(403, 'You do not have permission to update this task.');
+        }
+
         $rules = [
             'title' => 'sometimes|required|string|max:255',
             'description' => 'nullable|string',
@@ -81,12 +89,15 @@ class TaskController extends Controller
             'assignee_ids.*' => 'exists:users,id',
         ];
 
-        // If marking as done, require completion_remarks!
-        if ($request->input('status') === 'done') {
-            $rules['completion_remarks'] = 'required|string|min:3';
-        }
-
         $validated = $request->validate($rules);
+
+        // If marking as done via drag-and-drop or modal, stamp completed_at and default remark if missing
+        if ($request->input('status') === 'done') {
+            $validated['completed_at'] = now();
+            if (empty($validated['completion_remarks'])) {
+                $validated['completion_remarks'] = $task->completion_remarks ?: 'Completed successfully.';
+            }
+        }
 
         // Check assignee update permission
         if ($request->has('assignee_ids')) {
@@ -102,6 +113,77 @@ class TaskController extends Controller
         $task->update($validated);
 
         return back()->with('success', 'Task updated successfully.');
+    }
+
+    /**
+     * Delay Handling & Hierarchical Reason Lock
+     */
+    public function updateDelayReason(Request $request, Task $task)
+    {
+        $user = Auth::user();
+        $isLeadOrAdmin = $user->is_team_lead || $user->is_admin;
+
+        $request->validate([
+            'delay_category' => 'required|string|max:100',
+            'delay_reason' => 'required|string|min:5',
+            'action' => 'nullable|string|in:submit,finalize',
+        ]);
+
+        // Hierarchy Rule:
+        // If a Team Lead updates/confirms the delay reason, the field becomes permanently locked for the Employee.
+        if (!$isLeadOrAdmin && $task->delay_status === 'finalized_by_lead') {
+            return back()->withErrors(['delay_reason' => 'This delay explanation has been finalized and permanently locked by the Team Lead.']);
+        }
+
+        $category = $request->input('delay_category');
+        $note = $request->input('delay_reason');
+        $actionType = $request->input('action', 'submit');
+
+        $revisions = $task->delay_revisions ?: [];
+
+        if ($isLeadOrAdmin) {
+            $isFinalizing = $actionType === 'finalize';
+            $newStatus = $isFinalizing ? 'finalized_by_lead' : 'awaiting_lead_review';
+
+            $revisions[] = [
+                'user_id' => $user->id,
+                'user_name' => $user->name,
+                'user_role' => $user->is_admin ? 'Admin' : 'Team Lead',
+                'action' => $isFinalizing ? 'Finalized & Locked by Lead' : 'Reviewed & Updated by Lead',
+                'category' => $category,
+                'note' => $note,
+                'timestamp' => now()->toIso8601String(),
+            ];
+
+            $task->update([
+                'delay_category' => $category,
+                'delay_reason' => $note,
+                'delay_status' => $newStatus,
+                'delay_locked_by' => $isFinalizing ? $user->id : $task->delay_locked_by,
+                'delay_locked_at' => $isFinalizing ? now() : $task->delay_locked_at,
+                'delay_revisions' => $revisions,
+            ]);
+        } else {
+            // Employee updating delay reason
+            $revisions[] = [
+                'user_id' => $user->id,
+                'user_name' => $user->name,
+                'user_role' => 'Employee',
+                'action' => 'Submitted by Employee',
+                'category' => $category,
+                'note' => $note,
+                'timestamp' => now()->toIso8601String(),
+            ];
+
+            $task->update([
+                'delay_category' => $category,
+                'delay_reason' => $note,
+                'delay_status' => 'awaiting_lead_review',
+                'delay_revisions' => $revisions,
+            ]);
+        }
+
+        return back()->with('success', 'Delay reason saved successfully.');
     }
 
     public function destroy(Task $task)

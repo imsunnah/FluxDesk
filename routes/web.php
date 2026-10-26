@@ -48,6 +48,7 @@ Route::middleware('auth')->group(function () {
     // Task Management (Work Status)
     Route::post('/tasks', [\App\Http\Controllers\TaskController::class, 'store'])->name('tasks.store');
     Route::patch('/tasks/{task}', [\App\Http\Controllers\TaskController::class, 'update'])->name('tasks.update');
+    Route::post('/tasks/{task}/delay-reason', [\App\Http\Controllers\TaskController::class, 'updateDelayReason'])->name('tasks.delay-reason');
     Route::delete('/tasks/{task}', [\App\Http\Controllers\TaskController::class, 'destroy'])->name('tasks.delete');
 
     // Admin Setup & Management (Projects, Team Leads, Clients)
