@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { router } from '@inertiajs/vue3';
+import SearchableSelect from './SearchableSelect.vue';
 import {
     Building2,
     Briefcase,
@@ -61,15 +62,19 @@ const props = defineProps({
     },
     departments: {
         type: Array,
-        default: () => [
-            'Engineering',
-            'Technical Support',
-            'Customer Success',
-            'Quality Assurance (QA)',
-            'DevOps & Infrastructure',
-            'Product & Design',
-            'Management & Operations'
-        ],
+        default: () => [],
+    },
+    designations: {
+        type: Array,
+        default: () => [],
+    },
+    clients: {
+        type: Array,
+        default: () => [],
+    },
+    clientAssignments: {
+        type: Array,
+        default: () => [],
     },
 });
 
@@ -86,7 +91,7 @@ const tabs = [
     { id: 'designations', label: 'Designations', icon: Briefcase },
     { id: 'employees', label: 'Employees', icon: Users },
     { id: 'clients', label: 'Clients', icon: Building2 },
-    { id: 'account_managers', label: 'Account Managers', icon: UserCog },
+    { id: 'account_managers', label: 'Client Assignments', icon: UserCog },
     { id: 'projects', label: 'Projects', icon: FolderKanban },
 ];
 
@@ -124,17 +129,27 @@ function openSafeDeleteModal({ title, message, canDelete, dependencies = [], onC
 // =========================================================
 // TAB 1: DEPARTMENT SETUP STATE & LOGIC
 // =========================================================
-const initialDepartments = [
-    { id: 1, code: 'ENG', name: 'Engineering', hodId: 1, description: 'Software Architecture, Core Development, and API Engineering', status: 'active' },
-    { id: 2, code: 'SUP', name: 'Technical Support', hodId: 2, description: 'Tier-1 and Tier-2 Technical Helpdesk and Real-time Incident Response', status: 'active' },
-    { id: 3, code: 'CS', name: 'Customer Success', hodId: 3, description: 'Client Retention, Onboarding, and Account Growth Operations', status: 'active' },
-    { id: 4, code: 'QA', name: 'Quality Assurance (QA)', hodId: 4, description: 'Automated Testing, Manual QA Audits, and Performance Verification', status: 'active' },
-    { id: 5, code: 'DEV', name: 'DevOps & Infrastructure', hodId: 5, description: 'Cloud Systems, CI/CD Pipelines, and Server Reliability', status: 'active' },
-    { id: 6, code: 'DES', name: 'Product & Design', hodId: null, description: 'UI/UX Design, Design Systems, and Feature Prototyping', status: 'active' },
-    { id: 7, code: 'OPS', name: 'Management & Operations', hodId: 1, description: 'Executive Operations, Compliance, and Organizational Management', status: 'active' },
-];
+const departmentsList = ref([]);
+watch(() => props.departments, (newVal) => {
+    if (Array.isArray(newVal)) {
+        departmentsList.value = newVal.map(d => {
+            if (typeof d === 'string') {
+                return { id: d, code: d.slice(0, 3).toUpperCase(), name: d, hodId: null, description: '', status: 'active' };
+            }
+            return {
+                id: d.id,
+                code: d.code || '',
+                name: d.name || '',
+                hodId: d.hod_id || d.hodId || null,
+                description: d.description || '',
+                status: d.status || 'active',
+            };
+        });
+    } else {
+        departmentsList.value = [];
+    }
+}, { immediate: true });
 
-const departmentsList = ref([...initialDepartments]);
 const departmentSearch = ref('');
 const isDepartmentModalOpen = ref(false);
 const editingDepartment = ref(null);
@@ -195,28 +210,37 @@ function openEditDepartment(dept) {
 
 function saveDepartment() {
     if (!departmentForm.value.code || !departmentForm.value.name) return;
-    if (editingDepartment.value) {
-        Object.assign(editingDepartment.value, {
-            code: departmentForm.value.code.toUpperCase(),
-            name: departmentForm.value.name,
-            hodId: departmentForm.value.hodId ? Number(departmentForm.value.hodId) : null,
-            description: departmentForm.value.description,
-            status: departmentForm.value.status,
+    const payload = {
+        code: departmentForm.value.code.toUpperCase(),
+        name: departmentForm.value.name,
+        hod_id: departmentForm.value.hodId ? Number(departmentForm.value.hodId) : null,
+        description: departmentForm.value.description,
+        status: departmentForm.value.status,
+    };
+
+    if (editingDepartment.value && typeof editingDepartment.value.id === 'number') {
+        router.patch(`/admin/departments/${editingDepartment.value.id}`, payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isDepartmentModalOpen.value = false;
+                showToast(`Department "${payload.name}" updated successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error updating department.', 'error');
+            }
         });
-        showToast(`Department "${departmentForm.value.name}" updated successfully.`);
     } else {
-        const newDept = {
-            id: Date.now(),
-            code: departmentForm.value.code.toUpperCase(),
-            name: departmentForm.value.name,
-            hodId: departmentForm.value.hodId ? Number(departmentForm.value.hodId) : null,
-            description: departmentForm.value.description,
-            status: departmentForm.value.status,
-        };
-        departmentsList.value.push(newDept);
-        showToast(`Department "${newDept.name}" created successfully.`);
+        router.post('/admin/departments', payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isDepartmentModalOpen.value = false;
+                showToast(`Department "${payload.name}" created successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error creating department.', 'error');
+            }
+        });
     }
-    isDepartmentModalOpen.value = false;
 }
 
 function attemptDeleteDepartment(dept) {
@@ -237,8 +261,20 @@ function attemptDeleteDepartment(dept) {
         canDelete: true,
         dependencies: [],
         onConfirm: () => {
-            departmentsList.value = departmentsList.value.filter(d => d.id !== dept.id);
-            showToast(`Department "${dept.name}" deleted.`);
+            if (typeof dept.id === 'number') {
+                router.delete(`/admin/departments/${dept.id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        showToast(`Department "${dept.name}" deleted.`);
+                    },
+                    onError: (errs) => {
+                        showToast(Object.values(errs)[0] || 'Error deleting department.', 'error');
+                    }
+                });
+            } else {
+                departmentsList.value = departmentsList.value.filter(d => d.id !== dept.id);
+                showToast(`Department "${dept.name}" deleted.`);
+            }
         }
     });
 }
@@ -248,26 +284,28 @@ function attemptDeleteDepartment(dept) {
 // =========================================================
 const seniorityBands = ['Entry', 'Mid', 'Senior', 'Lead', 'Executive'];
 
-const initialDesignations = [
-    { id: 1, title: 'Junior Software Engineer', department: 'Engineering', band: 'Entry', responsibilities: 'Bug fixes, component development, unit test authoring.' },
-    { id: 2, title: 'Software Engineer', department: 'Engineering', band: 'Mid', responsibilities: 'Feature delivery, API integration, code review participation.' },
-    { id: 3, title: 'Senior Software Engineer', department: 'Engineering', band: 'Senior', responsibilities: 'System design, database optimization, mentorship.' },
-    { id: 4, title: 'Lead Architect', department: 'Engineering', band: 'Lead', responsibilities: 'Architecture blueprinting, framework migration, tech evaluation.' },
-    { id: 5, title: 'Customer Support Representative', department: 'Technical Support', band: 'Entry', responsibilities: 'Ticket triage, real-time customer messaging, canned replies.' },
-    { id: 6, title: 'Senior Support Engineer', department: 'Technical Support', band: 'Senior', responsibilities: 'Incident escalation, root cause analysis, webhook debugging.' },
-    { id: 7, title: 'Client Success Manager', department: 'Customer Success', band: 'Mid', responsibilities: 'Client satisfaction surveys, milestone reviews, onboarding.' },
-    { id: 8, title: 'QA Automation Engineer', department: 'Quality Assurance (QA)', band: 'Mid', responsibilities: 'Cypress/Playwright test suites, regression test runs.' },
-    { id: 9, title: 'DevOps Platform Engineer', department: 'DevOps & Infrastructure', band: 'Senior', responsibilities: 'Kubernetes management, Docker builds, Redis/Postgres caching.' },
-    { id: 10, title: 'VP of Engineering', department: 'Management & Operations', band: 'Executive', responsibilities: 'Organizational strategy, tech budget, executive leadership.' },
-];
+const designationsList = ref([]);
+watch(() => props.designations, (newVal) => {
+    if (Array.isArray(newVal)) {
+        designationsList.value = newVal.map(d => ({
+            id: d.id,
+            title: d.title || '',
+            department: d.department?.name || d.department_name || '',
+            departmentId: d.department_id,
+            band: d.band || 'Mid',
+            responsibilities: d.responsibilities || '',
+        }));
+    } else {
+        designationsList.value = [];
+    }
+}, { immediate: true });
 
-const designationsList = ref([...initialDesignations]);
 const designationSearch = ref('');
 const isDesignationModalOpen = ref(false);
 const editingDesignation = ref(null);
 const designationForm = ref({
     title: '',
-    department: 'Engineering',
+    department: '',
     band: 'Mid',
     responsibilities: '',
 });
@@ -290,7 +328,7 @@ function openAddDesignation(deptName = '') {
     editingDesignation.value = null;
     designationForm.value = {
         title: '',
-        department: deptName || departmentsList.value[0]?.name || 'Engineering',
+        department: deptName || departmentsList.value[0]?.name || '',
         band: 'Mid',
         responsibilities: '',
     };
@@ -310,26 +348,38 @@ function openEditDesignation(desig) {
 
 function saveDesignation() {
     if (!designationForm.value.title || !designationForm.value.department) return;
-    if (editingDesignation.value) {
-        Object.assign(editingDesignation.value, {
-            title: designationForm.value.title,
-            department: designationForm.value.department,
-            band: designationForm.value.band,
-            responsibilities: designationForm.value.responsibilities,
+    const deptObj = departmentsList.value.find(d => d.name === designationForm.value.department);
+    const payload = {
+        title: designationForm.value.title,
+        department_name: designationForm.value.department,
+        department_id: deptObj?.id || null,
+        band: designationForm.value.band,
+        responsibilities: designationForm.value.responsibilities,
+    };
+
+    if (editingDesignation.value && typeof editingDesignation.value.id === 'number') {
+        router.patch(`/admin/designations/${editingDesignation.value.id}`, payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isDesignationModalOpen.value = false;
+                showToast(`Designation "${payload.title}" updated.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error updating designation.', 'error');
+            }
         });
-        showToast(`Designation "${designationForm.value.title}" updated.`);
     } else {
-        const newDesig = {
-            id: Date.now(),
-            title: designationForm.value.title,
-            department: designationForm.value.department,
-            band: designationForm.value.band,
-            responsibilities: designationForm.value.responsibilities,
-        };
-        designationsList.value.push(newDesig);
-        showToast(`Designation "${newDesig.title}" created.`);
+        router.post('/admin/designations', payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isDesignationModalOpen.value = false;
+                showToast(`Designation "${payload.title}" created.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error creating designation.', 'error');
+            }
+        });
     }
-    isDesignationModalOpen.value = false;
 }
 
 function attemptDeleteDesignation(desig) {
@@ -350,8 +400,20 @@ function attemptDeleteDesignation(desig) {
         canDelete: true,
         dependencies: [],
         onConfirm: () => {
-            designationsList.value = designationsList.value.filter(d => d.id !== desig.id);
-            showToast(`Designation "${desig.title}" removed.`);
+            if (typeof desig.id === 'number') {
+                router.delete(`/admin/designations/${desig.id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        showToast(`Designation "${desig.title}" removed.`);
+                    },
+                    onError: (errs) => {
+                        showToast(Object.values(errs)[0] || 'Error deleting designation.', 'error');
+                    }
+                });
+            } else {
+                designationsList.value = designationsList.value.filter(d => d.id !== desig.id);
+                showToast(`Designation "${desig.title}" removed.`);
+            }
         }
     });
 }
@@ -420,17 +482,17 @@ const filteredEmployees = computed(() => {
 
 function openAddEmployee() {
     editingEmployee.value = null;
-    const defaultDept = departmentsList.value[0]?.name || 'Engineering';
-    const firstMatchingDesig = designationsList.value.find(d => d.department === defaultDept)?.title || 'Software Engineer';
+    const defaultDept = departmentsList.value[0]?.name || '';
+    const firstMatchingDesig = designationsList.value.find(d => d.department === defaultDept)?.title || designationsList.value[0]?.title || '';
 
     employeeForm.value = {
         firstName: '',
         lastName: '',
         email: '',
-        phone: '+1 (555) 019-2834',
+        phone: '',
         department: defaultDept,
         designation: firstMatchingDesig,
-        reportingManagerId: staffEmployees.value[0]?.id || '',
+        reportingManagerId: '',
         role: 'Employee',
         status: 'active',
     };
@@ -443,10 +505,10 @@ function openEditEmployee(user) {
     employeeForm.value = {
         firstName: parts[0] || '',
         lastName: parts.slice(1).join(' ') || '',
-        email: user.email,
-        phone: user.phone || '+1 (555) 019-2834',
-        department: user.department || 'Engineering',
-        designation: user.designation || 'Software Engineer',
+        email: user.email || '',
+        phone: user.phone || '',
+        department: user.department || '',
+        designation: user.designation || user.role || '',
         reportingManagerId: '',
         role: user.is_admin ? 'Admin' : (user.is_team_lead ? 'Team Lead' : 'Employee'),
         status: 'active',
@@ -460,23 +522,42 @@ function saveEmployee() {
     const isTeamLead = employeeForm.value.role === 'Team Lead';
     const isAdmin = employeeForm.value.role === 'Admin';
 
-    router.post('/members', {
-        name: fullName,
-        email: employeeForm.value.email,
-        password: 'password123',
-        department: employeeForm.value.department,
-        designation: employeeForm.value.designation,
-        role: employeeForm.value.role,
-        is_team_lead: isTeamLead,
-        is_admin: isAdmin,
-        is_customer: false,
-    }, {
-        preserveScroll: true,
-        onSuccess: () => {
-            isEmployeeModalOpen.value = false;
-            showToast(`Employee "${fullName}" saved successfully.`);
-        }
-    });
+    if (editingEmployee.value) {
+        router.patch(`/members/${editingEmployee.value.id}`, {
+            name: fullName,
+            email: employeeForm.value.email,
+            department: employeeForm.value.department,
+            designation: employeeForm.value.designation,
+            role: employeeForm.value.role,
+            is_team_lead: isTeamLead,
+            is_admin: isAdmin,
+            is_customer: false,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isEmployeeModalOpen.value = false;
+                showToast(`Employee "${fullName}" updated successfully.`);
+            }
+        });
+    } else {
+        router.post('/members', {
+            name: fullName,
+            email: employeeForm.value.email,
+            password: 'password123',
+            department: employeeForm.value.department,
+            designation: employeeForm.value.designation,
+            role: employeeForm.value.role,
+            is_team_lead: isTeamLead,
+            is_admin: isAdmin,
+            is_customer: false,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isEmployeeModalOpen.value = false;
+                showToast(`Employee "${fullName}" saved successfully.`);
+            }
+        });
+    }
 }
 
 function toggleTeamLead(user) {
@@ -553,33 +634,74 @@ const clientForm = ref({
 
 const clientUsers = computed(() => props.agents.filter(u => u.is_customer));
 
+const clientsList = ref([]);
+watch(() => props.clients, (newVal) => {
+    if (Array.isArray(newVal) && newVal.length > 0) {
+        clientsList.value = newVal.map(c => ({
+            id: c.id,
+            userId: c.user_id,
+            name: c.org_name,
+            orgName: c.org_name,
+            regNumber: c.reg_number || ('REG-' + c.id),
+            industry: c.industry || 'Enterprise SaaS',
+            billingAddress: c.billing_address || '',
+            pocName: c.poc_name || c.org_name,
+            pocEmail: c.poc_email || c.user?.email || '',
+            pocPhone: c.poc_phone || '',
+            status: c.status || 'active',
+            avatar: c.user?.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop',
+            member_id: c.user?.member_id || `CUST-${c.id}`,
+            projectsCount: c.projects_count ?? (c.projects?.length || 0),
+        }));
+    } else {
+        clientsList.value = clientUsers.value.map(u => ({
+            id: u.id,
+            userId: u.id,
+            name: u.name,
+            orgName: u.name,
+            regNumber: 'REG-' + u.id,
+            industry: 'Enterprise SaaS',
+            billingAddress: '',
+            pocName: u.name,
+            pocEmail: u.email,
+            pocPhone: '',
+            status: 'active',
+            avatar: u.avatar,
+            member_id: u.member_id || `CUST-${u.id}`,
+            projectsCount: getClientActiveProjectsCount(u.id),
+        }));
+    }
+}, { immediate: true });
+
 const filteredClients = computed(() => {
-    let list = clientUsers.value;
+    let list = clientsList.value;
     const q = (clientSearch.value || globalSearch.value).toLowerCase().trim();
     if (q) {
-        list = list.filter(u => 
-            u.name.toLowerCase().includes(q) ||
-            u.email.toLowerCase().includes(q) ||
-            (u.member_id || '').toLowerCase().includes(q)
+        list = list.filter(c => 
+            (c.orgName || c.name || '').toLowerCase().includes(q) ||
+            (c.pocEmail || '').toLowerCase().includes(q) ||
+            (c.pocName || '').toLowerCase().includes(q) ||
+            (c.regNumber || '').toLowerCase().includes(q) ||
+            (c.industry || '').toLowerCase().includes(q)
         );
     }
     return list;
 });
 
 function getClientActiveProjectsCount(clientId) {
-    return props.projects.filter(p => p.client_id === clientId && p.status !== 'completed').length;
+    return props.projects.filter(p => (p.client_id === clientId || p.clientRecord?.id === clientId) && p.status !== 'completed').length;
 }
 
 function openAddClient() {
     editingClient.value = null;
     clientForm.value = {
         orgName: '',
-        regNumber: 'REG-' + Math.floor(100000 + Math.random() * 900000),
-        industry: 'Enterprise SaaS',
-        billingAddress: '100 Innovation Way, Suite 400',
+        regNumber: '',
+        industry: initialClientsMetadata.industries[0] || 'Enterprise SaaS',
+        billingAddress: '',
         pocName: '',
         pocEmail: '',
-        pocPhone: '+1 (555) 982-1144',
+        pocPhone: '',
         status: 'active',
     };
     isClientModalOpen.value = true;
@@ -588,62 +710,89 @@ function openAddClient() {
 function openEditClient(client) {
     editingClient.value = client;
     clientForm.value = {
-        orgName: client.name,
-        regNumber: 'REG-849201',
-        industry: 'Enterprise SaaS',
-        billingAddress: '100 Innovation Way, Suite 400',
-        pocName: client.name,
-        pocEmail: client.email,
-        pocPhone: '+1 (555) 982-1144',
-        status: 'active',
+        orgName: client.orgName || client.name || '',
+        regNumber: client.regNumber || '',
+        industry: client.industry || initialClientsMetadata.industries[0] || 'Enterprise SaaS',
+        billingAddress: client.billingAddress || '',
+        pocName: client.pocName || client.name || '',
+        pocEmail: client.pocEmail || client.email || '',
+        pocPhone: client.pocPhone || '',
+        status: client.status || 'active',
     };
     isClientModalOpen.value = true;
 }
 
 function saveClient() {
     if (!clientForm.value.orgName || !clientForm.value.pocEmail) return;
-    router.post('/members', {
-        name: clientForm.value.orgName,
-        email: clientForm.value.pocEmail,
-        password: 'password123',
-        department: 'Client Accounts',
-        designation: 'Client Representative',
-        role: 'Client',
-        is_customer: true,
-        is_team_lead: false,
-    }, {
-        preserveScroll: true,
-        onSuccess: () => {
-            isClientModalOpen.value = false;
-            showToast(`Client "${clientForm.value.orgName}" saved successfully.`);
-        }
-    });
+
+    const payload = {
+        org_name: clientForm.value.orgName,
+        reg_number: clientForm.value.regNumber,
+        industry: clientForm.value.industry,
+        billing_address: clientForm.value.billingAddress,
+        poc_name: clientForm.value.pocName,
+        poc_email: clientForm.value.pocEmail,
+        poc_phone: clientForm.value.pocPhone,
+        status: clientForm.value.status,
+    };
+
+    if (editingClient.value && typeof editingClient.value.id === 'number') {
+        router.patch(`/admin/clients/${editingClient.value.id}`, payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isClientModalOpen.value = false;
+                showToast(`Client "${payload.org_name}" updated successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error updating client.', 'error');
+            }
+        });
+    } else {
+        router.post('/admin/clients', payload, {
+            preserveScroll: true,
+            onSuccess: () => {
+                isClientModalOpen.value = false;
+                showToast(`Client "${payload.org_name}" saved successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error saving client.', 'error');
+            }
+        });
+    }
 }
 
 function attemptDeleteClient(client) {
-    const clientProjects = props.projects.filter(p => p.client_id === client.id);
-    if (clientProjects.length > 0) {
+    const activeProjects = props.projects.filter(p => p.client_id === client.id || (client.userId && p.client_id === client.userId));
+    if (activeProjects.length > 0) {
         openSafeDeleteModal({
             title: 'Cannot Delete Client',
-            message: `Client "${client.name}" cannot be deleted because it is linked to ${clientProjects.length} active project(s).`,
+            message: `Client "${client.orgName || client.name}" cannot be deleted because it is linked to ${activeProjects.length} active project(s).`,
             canDelete: false,
-            dependencies: clientProjects.map(p => `Project: "${p.name}" (Status: ${p.status})`),
+            dependencies: activeProjects.map(p => `Project: "${p.name}" (Status: ${p.status})`),
         });
         return;
     }
 
     openSafeDeleteModal({
         title: 'Delete Client Confirmation',
-        message: `Are you sure you want to delete client account "${client.name}"?`,
+        message: `Are you sure you want to delete client account "${client.orgName || client.name}"?`,
         canDelete: true,
         dependencies: [],
         onConfirm: () => {
-            router.delete(`/members/${client.id}`, {
-                preserveScroll: true,
-                onSuccess: () => {
-                    showToast(`Client "${client.name}" deleted.`);
-                }
-            });
+            if (typeof client.id === 'number') {
+                router.delete(`/admin/clients/${client.id}`, {
+                    preserveScroll: true,
+                    onSuccess: () => {
+                        showToast(`Client "${client.orgName || client.name}" deleted.`);
+                    },
+                    onError: (errs) => {
+                        showToast(Object.values(errs)[0] || 'Error deleting client.', 'error');
+                    }
+                });
+            } else {
+                clientsList.value = clientsList.value.filter(c => c.id !== client.id);
+                showToast(`Client "${client.orgName || client.name}" deleted.`);
+            }
         }
     });
 }
@@ -651,67 +800,103 @@ function attemptDeleteClient(client) {
 // =========================================================
 // TAB 5: CLIENT-HANDLING PERSON SETUP (ACCOUNT MAPPING)
 // =========================================================
-const initialAccountMappings = [
-    {
-        id: 1,
-        clientId: null,
-        clientOrg: 'Acme Corporation',
-        primaryManagerId: 1,
-        backupEscalationId: 2,
-        slaLevel: 'VIP',
-        assignmentDate: '2026-01-15',
-        communicationPreference: 'Dedicated Slack Connect + Weekly Sync',
-        notes: 'Executive priority client. All escalations must resolve within 2 hours.'
-    },
-    {
-        id: 2,
-        clientId: null,
-        clientOrg: 'Nexus Health Systems',
-        primaryManagerId: 3,
-        backupEscalationId: 1,
-        slaLevel: 'Gold',
-        assignmentDate: '2026-03-01',
-        communicationPreference: 'Email & In-App Workspace Tickets',
-        notes: 'HIPAA compliance review required before software updates.'
-    },
-    {
-        id: 3,
-        clientId: null,
-        clientOrg: 'Horizon Global Logistics',
-        primaryManagerId: 2,
-        backupEscalationId: 3,
-        slaLevel: 'Standard',
-        assignmentDate: '2026-04-10',
-        communicationPreference: 'Portal & Bi-weekly Status Email',
-        notes: 'Standard 24h SLA response time.'
+const accountManagersList = ref([]);
+watch(() => props.clientAssignments, (newVal) => {
+    if (Array.isArray(newVal)) {
+        accountManagersList.value = newVal.map(a => ({
+            id: a.id,
+            clientId: a.client_id,
+            clientOrg: a.client?.org_name || a.client?.poc_name || ('Client #' + a.client_id),
+            selectedDepartments: Array.isArray(a.selected_departments) ? a.selected_departments : [],
+            assignedMemberIds: Array.isArray(a.assigned_member_ids) ? a.assigned_member_ids : [],
+            primaryManagerId: a.primary_manager_id,
+            backupEscalationId: a.backup_escalation_id,
+            slaLevel: a.sla_level || 'Standard',
+            assignmentDate: a.assignment_date || '',
+            communicationPreference: a.communication_preference || 'Email Dispatch & Weekly Standup',
+            notes: a.notes || '',
+        }));
+    } else {
+        accountManagersList.value = [];
     }
-];
+}, { immediate: true });
 
-const accountManagersList = ref([...initialAccountMappings]);
 const accountManagerSearch = ref('');
 const isAccountManagerModalOpen = ref(false);
 const editingAccountManager = ref(null);
+const isClientAlreadyAssigned = ref(false);
+
 const accountManagerForm = ref({
     clientId: '',
     clientOrgName: '',
-    primaryManagerId: '',
-    backupEscalationId: '',
-    slaLevel: 'Gold',
-    communicationPreference: 'Dedicated Slack Connect + Weekly Sync',
-    notes: '',
+    assignedMemberIds: [],
 });
 
-const slaLevels = ['Standard', 'Gold', 'VIP'];
+// Searchable Select Options for Projects
+const clientSelectOptions = computed(() => {
+    if (clientsList.value.length > 0) {
+        return clientsList.value.map(c => ({
+            id: c.id,
+            label: c.orgName || c.name,
+            subtext: c.pocEmail || c.email,
+            avatar: c.avatar,
+            badge: c.regNumber || c.member_id || `CUST-${c.id}`,
+        }));
+    }
+    return clientUsers.value.map(c => ({
+        id: c.id,
+        label: c.name,
+        subtext: c.email,
+        avatar: c.avatar,
+        badge: c.member_id || `CUST-${c.id}`,
+    }));
+});
+
+// Clients for Assignment: Already assigned clients do NOT show in list for create
+const assignableClientSelectOptions = computed(() => {
+    const allClients = clientsList.value.length > 0 ? clientsList.value : clientUsers.value;
+    const assignedIds = new Set(accountManagersList.value.map(m => String(m.clientId)));
+    const assignedOrgs = new Set(accountManagersList.value.map(m => (m.clientOrg || '').toLowerCase().trim()));
+
+    return allClients
+        .filter(c => {
+            const idStr = String(c.id);
+            const orgStr = (c.orgName || c.name || '').toLowerCase().trim();
+
+            if (editingAccountManager.value) {
+                const isCurrent = String(editingAccountManager.value.clientId) === idStr ||
+                    (editingAccountManager.value.clientOrg || '').toLowerCase().trim() === orgStr;
+                return isCurrent;
+            }
+
+            return !assignedIds.has(idStr) && !assignedOrgs.has(orgStr);
+        })
+        .map(c => ({
+            id: c.id,
+            label: c.orgName || c.name,
+            subtext: c.pocEmail || c.email,
+            avatar: c.avatar,
+            badge: c.regNumber || c.member_id || `CUST-${c.id}`,
+        }));
+});
+
+const staffSelectOptions = computed(() => {
+    return staffEmployees.value.map(s => ({
+        id: s.id,
+        label: s.name,
+        subtext: `${s.department || 'Staff'} • ${s.designation || s.role || 'Employee'}`,
+        avatar: s.avatar,
+        badge: s.is_team_lead ? 'Team Lead' : (s.is_admin ? 'Admin' : ''),
+    }));
+});
 
 const filteredAccountManagers = computed(() => {
     let list = accountManagersList.value;
     const q = (accountManagerSearch.value || globalSearch.value).toLowerCase().trim();
     if (q) {
         list = list.filter(m => 
-            m.clientOrg.toLowerCase().includes(q) ||
-            m.slaLevel.toLowerCase().includes(q) ||
-            (m.communicationPreference || '').toLowerCase().includes(q) ||
-            (getStaffName(m.primaryManagerId) || '').toLowerCase().includes(q)
+            (m.clientOrg || '').toLowerCase().includes(q) ||
+            getAssignedMembers(m).some(u => (u.name || '').toLowerCase().includes(q) || (u.department || '').toLowerCase().includes(q))
         );
     }
     return list;
@@ -720,91 +905,109 @@ const filteredAccountManagers = computed(() => {
 function getStaffName(userId) {
     if (!userId) return 'Unassigned';
     const user = props.agents.find(u => u.id === Number(userId));
-    return user ? user.name : 'Staff Agent #' + userId;
+    return user ? user.name : 'Staff #' + userId;
+}
+
+function getStaffUser(userId) {
+    return props.agents.find(u => u.id === Number(userId)) || null;
+}
+
+function getAssignedMembers(mapping) {
+    if (!mapping.assignedMemberIds || mapping.assignedMemberIds.length === 0) {
+        const primary = getStaffUser(mapping.primaryManagerId);
+        return primary ? [primary] : [];
+    }
+    return mapping.assignedMemberIds.map(id => getStaffUser(id)).filter(Boolean);
+}
+
+function removeAssignedMember(memberId) {
+    accountManagerForm.value.assignedMemberIds = accountManagerForm.value.assignedMemberIds.filter(id => Number(id) !== Number(memberId));
 }
 
 function openAddAccountManager() {
     editingAccountManager.value = null;
-    const firstClient = clientUsers.value[0];
-    const firstStaff = staffEmployees.value[0];
-    const secondStaff = staffEmployees.value[1] || firstStaff;
+    isClientAlreadyAssigned.value = false;
+
+    const firstAvailable = assignableClientSelectOptions.value[0];
+    const initialClientId = firstAvailable ? firstAvailable.id : '';
+    const initialOrgName = firstAvailable ? firstAvailable.label : '';
 
     accountManagerForm.value = {
-        clientId: firstClient?.id || '',
-        clientOrgName: firstClient?.name || 'General Client',
-        primaryManagerId: firstStaff?.id || '',
-        backupEscalationId: secondStaff?.id || '',
-        slaLevel: 'Gold',
-        communicationPreference: 'Dedicated Slack Connect + Weekly Sync',
-        notes: 'Client account liaison established for technical delivery.',
+        clientId: initialClientId,
+        clientOrgName: initialOrgName,
+        assignedMemberIds: [],
     };
     isAccountManagerModalOpen.value = true;
 }
 
 function openEditAccountManager(mapping) {
     editingAccountManager.value = mapping;
+    isClientAlreadyAssigned.value = true;
+
+    let resolvedClientId = mapping.clientId;
+    if (!resolvedClientId) {
+        const allClients = clientsList.value.length > 0 ? clientsList.value : clientUsers.value;
+        const found = allClients.find(c => 
+            (c.orgName || c.name).toLowerCase() === mapping.clientOrg.toLowerCase() ||
+            (c.orgName || c.name).toLowerCase().includes(mapping.clientOrg.toLowerCase()) ||
+            mapping.clientOrg.toLowerCase().includes((c.orgName || c.name).toLowerCase())
+        );
+        if (found) resolvedClientId = found.id;
+    }
+
+    const memberIds = [...(mapping.assignedMemberIds || [mapping.primaryManagerId].filter(Boolean))];
+
     accountManagerForm.value = {
-        clientId: mapping.clientId || '',
+        clientId: resolvedClientId || '',
         clientOrgName: mapping.clientOrg,
-        primaryManagerId: mapping.primaryManagerId,
-        backupEscalationId: mapping.backupEscalationId,
-        slaLevel: mapping.slaLevel,
-        communicationPreference: mapping.communicationPreference,
-        notes: mapping.notes || '',
+        assignedMemberIds: memberIds,
     };
     isAccountManagerModalOpen.value = true;
 }
 
-function onMappingClientSelect() {
-    const client = clientUsers.value.find(c => String(c.id) === String(accountManagerForm.value.clientId));
-    if (client) {
-        accountManagerForm.value.clientOrgName = client.name;
-    }
-}
-
 function saveAccountManager() {
-    if (!accountManagerForm.value.clientOrgName || !accountManagerForm.value.primaryManagerId) return;
-
-    if (editingAccountManager.value) {
-        Object.assign(editingAccountManager.value, {
-            clientId: accountManagerForm.value.clientId,
-            clientOrg: accountManagerForm.value.clientOrgName,
-            primaryManagerId: Number(accountManagerForm.value.primaryManagerId),
-            backupEscalationId: accountManagerForm.value.backupEscalationId ? Number(accountManagerForm.value.backupEscalationId) : null,
-            slaLevel: accountManagerForm.value.slaLevel,
-            communicationPreference: accountManagerForm.value.communicationPreference,
-            notes: accountManagerForm.value.notes,
-        });
-        showToast(`Account mapping for "${accountManagerForm.value.clientOrgName}" updated.`);
-    } else {
-        const newMapping = {
-            id: Date.now(),
-            clientId: accountManagerForm.value.clientId,
-            clientOrg: accountManagerForm.value.clientOrgName,
-            primaryManagerId: Number(accountManagerForm.value.primaryManagerId),
-            backupEscalationId: accountManagerForm.value.backupEscalationId ? Number(accountManagerForm.value.backupEscalationId) : null,
-            slaLevel: accountManagerForm.value.slaLevel,
-            assignmentDate: new Date().toISOString().split('T')[0],
-            communicationPreference: accountManagerForm.value.communicationPreference,
-            notes: accountManagerForm.value.notes,
-        };
-        accountManagersList.value.push(newMapping);
-        showToast(`Account manager linked for "${newMapping.clientOrg}".`);
+    if (!accountManagerForm.value.clientId) {
+        showToast('Please select a client.', 'error');
+        return;
     }
-    isAccountManagerModalOpen.value = false;
+
+    const payload = {
+        client_id: accountManagerForm.value.clientId,
+        assigned_member_ids: accountManagerForm.value.assignedMemberIds || [],
+        primary_manager_id: accountManagerForm.value.assignedMemberIds?.[0] ? Number(accountManagerForm.value.assignedMemberIds[0]) : null,
+        backup_escalation_id: null,
+        selected_departments: [],
+        sla_level: 'Standard',
+        communication_preference: '',
+        notes: '',
+    };
+
+    router.post('/admin/client-assignments', payload, {
+        preserveScroll: true,
+        onSuccess: () => {
+            isAccountManagerModalOpen.value = false;
+            showToast(`Client assignment saved successfully.`);
+        },
+        onError: (errs) => {
+            showToast(Object.values(errs)[0] || 'Error saving client assignment.', 'error');
+        }
+    });
 }
 
 function deleteAccountManager(mapping) {
-    accountManagersList.value = accountManagersList.value.filter(m => m.id !== mapping.id);
-    showToast(`Account manager mapping removed.`);
-}
-
-function getSlaBadge(sla) {
-    switch (sla) {
-        case 'VIP': return 'bg-rose-100 text-rose-800 border-rose-300 font-bold';
-        case 'Gold': return 'bg-amber-100 text-amber-800 border-amber-300 font-bold';
-        case 'Standard': return 'bg-slate-100 text-slate-700 border-slate-200';
-        default: return 'bg-slate-100 text-slate-600 border-slate-200';
+    if (mapping.id && typeof mapping.id === 'number') {
+        router.delete(`/admin/client-assignments/${mapping.id}`, {
+            preserveScroll: true,
+            onSuccess: () => {
+                showToast(`Client assignment removed.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error removing assignment.', 'error');
+            }
+        });
+    } else {
+        accountManagersList.value = accountManagersList.value.filter(m => m.id !== mapping.id);
+        showToast(`Client assignment removed.`);
     }
 }
 
@@ -846,17 +1049,16 @@ const filteredProjects = computed(() => {
 function openAddProject() {
     editingProject.value = null;
     const defaultLead = staffEmployees.value.find(s => s.is_team_lead) || staffEmployees.value[0];
-    const code = 'PRJ-' + Math.floor(100 + Math.random() * 900);
     const today = new Date().toISOString().split('T')[0];
-    const target = new Date(Date.now() + 86400000 * 45).toISOString().split('T')[0];
+    const target = new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0];
 
     projectForm.value = {
-        code,
+        code: '',
         name: '',
-        clientId: clientUsers.value[0]?.id || '',
+        clientId: clientsList.value[0]?.id || clientUsers.value[0]?.id || '',
         clientHandlingLead: '',
         teamLeadId: defaultLead?.id || '',
-        teamMemberIds: [defaultLead?.id].filter(Boolean),
+        teamMemberIds: defaultLead ? [defaultLead.id] : [],
         startDate: today,
         targetDate: target,
         status: 'Active',
@@ -869,14 +1071,14 @@ function openAddProject() {
 function openEditProject(proj) {
     editingProject.value = proj;
     projectForm.value = {
-        code: 'PRJ-' + proj.id,
+        code: proj.code || ('PRJ-' + proj.id),
         name: proj.name,
         clientId: proj.client_id || '',
         clientHandlingLead: '',
-        teamLeadId: staffEmployees.value.find(s => s.is_team_lead)?.id || staffEmployees.value[0]?.id || '',
-        teamMemberIds: [],
-        startDate: new Date().toISOString().split('T')[0],
-        targetDate: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
+        teamLeadId: proj.team_lead_id || staffEmployees.value.find(s => s.is_team_lead)?.id || staffEmployees.value[0]?.id || '',
+        teamMemberIds: Array.isArray(proj.team_member_ids) ? [...proj.team_member_ids] : [],
+        startDate: proj.start_date || new Date().toISOString().split('T')[0],
+        targetDate: proj.target_date || new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
         status: proj.status ? proj.status.charAt(0).toUpperCase() + proj.status.slice(1) : 'Active',
         description: proj.description || '',
     };
@@ -885,7 +1087,6 @@ function openEditProject(proj) {
 }
 
 function onProjectClientChange() {
-    // Auto-fill Client-Handling Lead from Tab 5 Account Manager Mapping!
     const mapping = accountManagersList.value.find(m => {
         if (projectForm.value.clientId) {
             return String(m.clientId) === String(projectForm.value.clientId);
@@ -893,14 +1094,15 @@ function onProjectClientChange() {
         return false;
     });
 
-    if (mapping) {
-        projectForm.value.clientHandlingLead = getStaffName(mapping.primaryManagerId);
+    if (mapping && mapping.primaryManagerId) {
+        const teamCount = (mapping.assignedMemberIds || []).length;
+        projectForm.value.clientHandlingLead = getStaffName(mapping.primaryManagerId) + (teamCount > 1 ? ` (+${teamCount - 1} team)` : '');
     } else {
         const client = clientUsers.value.find(c => String(c.id) === String(projectForm.value.clientId));
         if (client && client.assigned_agent) {
             projectForm.value.clientHandlingLead = client.assigned_agent.name;
         } else {
-            projectForm.value.clientHandlingLead = staffEmployees.value[0]?.name || 'Internal Liaison';
+            projectForm.value.clientHandlingLead = '';
         }
     }
 }
@@ -917,30 +1119,38 @@ function toggleProjectTeamMember(id) {
 function saveProject() {
     if (!projectForm.value.name.trim()) return;
 
+    const payload = {
+        code: projectForm.value.code,
+        name: projectForm.value.name,
+        client_id: projectForm.value.clientId ? Number(projectForm.value.clientId) : null,
+        team_lead_id: projectForm.value.teamLeadId ? Number(projectForm.value.teamLeadId) : null,
+        team_member_ids: projectForm.value.teamMemberIds || [],
+        start_date: projectForm.value.startDate || null,
+        target_date: projectForm.value.targetDate || null,
+        status: projectForm.value.status.toLowerCase(),
+        description: projectForm.value.description,
+    };
+
     if (editingProject.value) {
-        router.patch(`/projects/${editingProject.value.id}`, {
-            name: projectForm.value.name,
-            client_id: projectForm.value.clientId ? Number(projectForm.value.clientId) : null,
-            description: projectForm.value.description,
-            status: projectForm.value.status.toLowerCase(),
-        }, {
+        router.patch(`/projects/${editingProject.value.id}`, payload, {
             preserveScroll: true,
             onSuccess: () => {
                 isProjectModalOpen.value = false;
                 showToast(`Project "${projectForm.value.name}" updated successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error updating project.', 'error');
             }
         });
     } else {
-        router.post('/projects', {
-            name: projectForm.value.name,
-            client_id: projectForm.value.clientId ? Number(projectForm.value.clientId) : null,
-            description: projectForm.value.description,
-            status: projectForm.value.status.toLowerCase(),
-        }, {
+        router.post('/projects', payload, {
             preserveScroll: true,
             onSuccess: () => {
                 isProjectModalOpen.value = false;
                 showToast(`Project "${projectForm.value.name}" created successfully.`);
+            },
+            onError: (errs) => {
+                showToast(Object.values(errs)[0] || 'Error creating project.', 'error');
             }
         });
     }
@@ -1031,15 +1241,14 @@ function exportActiveTabCsv() {
             getClientActiveProjectsCount(c.id)
         ]);
     } else if (activeTab.value === 'account_managers') {
-        headers = ['Client Organization', 'Primary Account Manager', 'Backup Escalation', 'SLA Level', 'Assignment Date', 'Communication Preference'];
-        rows = filteredAccountManagers.value.map(m => [
-            `"${m.clientOrg}"`,
-            `"${getStaffName(m.primaryManagerId)}"`,
-            `"${getStaffName(m.backupEscalationId)}"`,
-            m.slaLevel,
-            m.assignmentDate,
-            `"${m.communicationPreference}"`
-        ]);
+        headers = ['Client', 'Assigned Users'];
+        rows = filteredAccountManagers.value.map(m => {
+            const members = getAssignedMembers(m).map(u => u.name).join('; ');
+            return [
+                `"${(m.clientOrg || '').replace(/"/g, '""')}"`,
+                `"${members.replace(/"/g, '""')}"`
+            ];
+        });
     } else if (activeTab.value === 'projects') {
         headers = ['Project Code', 'Project Name', 'Client Name', 'Status', 'Description'];
         rows = filteredProjects.value.map(p => [
@@ -1080,95 +1289,29 @@ function exportActiveTabCsv() {
         <!-- ============================================================= -->
         <!-- TOP BREADCRUMB & GLOBAL MASTER ACTION BAR                     -->
         <!-- ============================================================= -->
-        <div class="bg-white border-b border-slate-200 px-6 py-4 shadow-2xs">
-            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                <div>
-                    <!-- Breadcrumb Navigation -->
-                    <div class="flex items-center space-x-2 text-xs text-slate-400 font-medium">
-                        <span>Admin Console</span>
-                        <ChevronRight class="w-3.5 h-3.5 text-slate-300" />
-                        <span class="text-slate-600">Master Setup</span>
-                        <ChevronRight class="w-3.5 h-3.5 text-slate-300" />
-                        <span class="text-indigo-600 font-bold capitalize">{{ activeTab.replace('_', ' ') }} Setup</span>
-                    </div>
-
-                    <div class="flex items-center space-x-2 mt-1">
-                        <ShieldCheck class="w-5 h-5 text-indigo-600" />
-                        <h1 class="text-base font-bold text-slate-900 tracking-tight">Admin Master Setup Panel</h1>
-                        <span class="px-2 py-0.2 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                            Enterprise Operations
-                        </span>
-                    </div>
+        <!-- ============================================================= -->
+        <!-- TOP NAVIGATION & TABS BAR                                     -->
+        <!-- ============================================================= -->
+        <div class="bg-white border-b border-slate-200 px-6 py-3.5 shadow-2xs">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div class="flex items-center space-x-2">
+                    <ShieldCheck class="w-4 h-4 text-indigo-600" />
+                    <h1 class="text-sm font-bold text-slate-900 tracking-tight">Admin Setup</h1>
                 </div>
 
-                <!-- Global Action Bar with Quick-Add Shortcuts & CSV Export -->
-                <div class="flex items-center space-x-2 flex-wrap gap-y-1.5">
-                    <!-- Quick Add Shortcuts -->
-                    <button
-                        @click="openAddDepartment()"
-                        class="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Department"
-                    >
-                        <Plus class="w-3 h-3 text-indigo-600" />
-                        <span>Dept</span>
-                    </button>
-                    <button
-                        @click="openAddDesignation()"
-                        class="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Designation"
-                    >
-                        <Plus class="w-3 h-3 text-indigo-600" />
-                        <span>Designation</span>
-                    </button>
-                    <button
-                        @click="openAddEmployee()"
-                        class="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Employee"
-                    >
-                        <Plus class="w-3 h-3 text-indigo-600" />
-                        <span>Employee</span>
-                    </button>
-                    <button
-                        @click="openAddClient()"
-                        class="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Client"
-                    >
-                        <Plus class="w-3 h-3 text-indigo-600" />
-                        <span>Client</span>
-                    </button>
-                    <button
-                        @click="openAddAccountManager()"
-                        class="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Account Mapping"
-                    >
-                        <Plus class="w-3 h-3 text-indigo-600" />
-                        <span>Liaison</span>
-                    </button>
-                    <button
-                        @click="openAddProject()"
-                        class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Add Project"
-                    >
-                        <Plus class="w-3.5 h-3.5" />
-                        <span>Project</span>
-                    </button>
-
-                    <!-- Export Active Tab CSV -->
-                    <button
-                        @click="exportActiveTabCsv"
-                        class="px-2.5 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 rounded-xl text-xs font-semibold flex items-center space-x-1 shadow-2xs transition-colors"
-                        title="Export current table to CSV"
-                    >
-                        <Download class="w-3.5 h-3.5 text-slate-500" />
-                        <span>Export CSV</span>
-                    </button>
-                </div>
+                <!-- Export CSV -->
+                <button
+                    @click="exportActiveTabCsv"
+                    class="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-2xs"
+                    title="Export active table to CSV"
+                >
+                    <Download class="w-3.5 h-3.5 text-slate-500" />
+                    <span>Export CSV</span>
+                </button>
             </div>
 
-            <!-- ========================================================= -->
-            <!-- 6 DEDICATED SETUP TABS (RESPONSIVE TOP BAR)               -->
-            <!-- ========================================================= -->
-            <div class="flex items-center space-x-1 mt-4 pt-3 border-t border-slate-100 overflow-x-auto text-xs font-semibold">
+            <!-- 6 DEDICATED SETUP TABS -->
+            <div class="flex items-center space-x-1 pt-3 overflow-x-auto text-xs font-semibold">
                 <button
                     v-for="t in tabs"
                     :key="t.id"
@@ -1191,7 +1334,7 @@ function exportActiveTabCsv() {
                             t.id === 'departments' ? departmentsList.length :
                             t.id === 'designations' ? designationsList.length :
                             t.id === 'employees' ? staffEmployees.length :
-                            t.id === 'clients' ? clientUsers.length :
+                            t.id === 'clients' ? clientsList.length :
                             t.id === 'account_managers' ? accountManagersList.length :
                             projects.length
                         }}
@@ -1209,10 +1352,7 @@ function exportActiveTabCsv() {
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'departments'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Organizational Departments Setup</h2>
-                        <p class="text-[11px] text-slate-500">Configure corporate departments, codes, descriptions, and assign Heads of Department (HOD).</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Departments</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1220,7 +1360,7 @@ function exportActiveTabCsv() {
                             <input
                                 v-model="departmentSearch"
                                 type="text"
-                                placeholder="Search departments or code..."
+                                placeholder="Search departments..."
                                 class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-indigo-600"
                             />
                         </div>
@@ -1241,20 +1381,25 @@ function exportActiveTabCsv() {
                             <tr>
                                 <th class="px-4 py-3">Code</th>
                                 <th class="px-3 py-3">Department Name</th>
-                                <th class="px-3 py-3">Assigned Head of Department (HOD)</th>
-                                <th class="px-3 py-3 text-center">Active Staff Count</th>
+                                <th class="px-3 py-3">Head of Department</th>
+                                <th class="px-3 py-3 text-center">Staff Count</th>
                                 <th class="px-3 py-3">Status</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredDepartments.length === 0">
+                                <td colspan="6" class="px-4 py-8 text-center text-slate-400">
+                                    No departments found.
+                                </td>
+                            </tr>
                             <tr v-for="dept in filteredDepartments" :key="dept.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3 font-mono font-bold text-indigo-700">
                                     {{ dept.code }}
                                 </td>
                                 <td class="px-3 py-3">
                                     <div class="font-bold text-slate-900">{{ dept.name }}</div>
-                                    <div class="text-[10px] text-slate-400 line-clamp-1 max-w-sm">{{ dept.description }}</div>
+                                    <div v-if="dept.description" class="text-[10px] text-slate-400 line-clamp-1 max-w-sm">{{ dept.description }}</div>
                                 </td>
                                 <td class="px-3 py-3">
                                     <div v-if="getHodUser(dept.hodId)" class="flex items-center space-x-2">
@@ -1265,7 +1410,7 @@ function exportActiveTabCsv() {
                                 </td>
                                 <td class="px-3 py-3 text-center font-mono font-bold text-slate-700">
                                     <span class="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[10px]">
-                                        {{ getDepartmentStaffCount(dept.name) }} members
+                                        {{ getDepartmentStaffCount(dept.name) }}
                                     </span>
                                 </td>
                                 <td class="px-3 py-3">
@@ -1300,10 +1445,7 @@ function exportActiveTabCsv() {
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'designations'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Job Designations & Seniority Bands</h2>
-                        <p class="text-[11px] text-slate-500">Define job titles, parent departments, hierarchy bands, and role responsibility briefs.</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Designations</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1330,14 +1472,19 @@ function exportActiveTabCsv() {
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
                             <tr>
-                                <th class="px-4 py-3">Designation Title</th>
-                                <th class="px-3 py-3">Assigned Department</th>
-                                <th class="px-3 py-3">Seniority Band</th>
-                                <th class="px-3 py-3">Responsibilities Brief</th>
+                                <th class="px-4 py-3">Designation</th>
+                                <th class="px-3 py-3">Department</th>
+                                <th class="px-3 py-3">Band</th>
+                                <th class="px-3 py-3">Responsibilities</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredDesignations.length === 0">
+                                <td colspan="5" class="px-4 py-8 text-center text-slate-400">
+                                    No designations found.
+                                </td>
+                            </tr>
                             <tr v-for="desig in filteredDesignations" :key="desig.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3 font-bold text-slate-900">
                                     {{ desig.title }}
@@ -1378,14 +1525,12 @@ function exportActiveTabCsv() {
             </div>
 
             <!-- --------------------------------------------------------- -->
+            <!-- --------------------------------------------------------- -->
             <!-- TAB 3: EMPLOYEE SETUP                                      -->
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'employees'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Employees Directory & Role Setup</h2>
-                        <p class="text-[11px] text-slate-500">Manage internal personnel, dynamic department-designation linkage, and Team Lead status.</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Employees</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1393,7 +1538,7 @@ function exportActiveTabCsv() {
                             <input
                                 v-model="employeeSearch"
                                 type="text"
-                                placeholder="Search employees by name, email..."
+                                placeholder="Search employees..."
                                 class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-indigo-600"
                             />
                         </div>
@@ -1412,17 +1557,22 @@ function exportActiveTabCsv() {
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
                             <tr>
-                                <th class="px-4 py-3">Avatar + Full Name</th>
+                                <th class="px-4 py-3">Name</th>
                                 <th class="px-3 py-3">Employee ID</th>
-                                <th class="px-3 py-3">Contact Email</th>
+                                <th class="px-3 py-3">Email</th>
                                 <th class="px-3 py-3">Department</th>
                                 <th class="px-3 py-3">Designation</th>
-                                <th class="px-3 py-3">Role Tag</th>
+                                <th class="px-3 py-3">Role</th>
                                 <th class="px-3 py-3 text-center">Status</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredEmployees.length === 0">
+                                <td colspan="8" class="px-4 py-8 text-center text-slate-400">
+                                    No employees found.
+                                </td>
+                            </tr>
                             <tr v-for="user in filteredEmployees" :key="user.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3">
                                     <div class="flex items-center space-x-2.5">
@@ -1484,10 +1634,7 @@ function exportActiveTabCsv() {
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'clients'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Client Organizations Directory</h2>
-                        <p class="text-[11px] text-slate-500">Corporate client registration, primary points of contact, and business domains.</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Clients</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1495,7 +1642,7 @@ function exportActiveTabCsv() {
                             <input
                                 v-model="clientSearch"
                                 type="text"
-                                placeholder="Search client organization..."
+                                placeholder="Search clients..."
                                 class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-indigo-600"
                             />
                         </div>
@@ -1514,40 +1661,45 @@ function exportActiveTabCsv() {
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
                             <tr>
-                                <th class="px-4 py-3">Client Organization</th>
-                                <th class="px-3 py-3">Primary POC Name & Email</th>
-                                <th class="px-3 py-3">Domain / Industry</th>
-                                <th class="px-3 py-3 text-center">Active Projects</th>
+                                <th class="px-4 py-3">Client</th>
+                                <th class="px-3 py-3">Contact</th>
+                                <th class="px-3 py-3">Industry</th>
+                                <th class="px-3 py-3 text-center">Projects</th>
                                 <th class="px-3 py-3 text-center">Status</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredClients.length === 0">
+                                <td colspan="6" class="px-4 py-8 text-center text-slate-400">
+                                    No clients found.
+                                </td>
+                            </tr>
                             <tr v-for="client in filteredClients" :key="client.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3">
                                     <div class="flex items-center space-x-2.5">
                                         <img :src="client.avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=50&h=50&fit=crop'" class="w-7 h-7 rounded-full object-cover" />
                                         <div>
-                                            <div class="font-bold text-slate-900">{{ client.name }}</div>
-                                            <div class="text-[10px] font-mono text-slate-400">{{ client.member_id || 'CUST-' + client.id }}</div>
+                                            <div class="font-bold text-slate-900">{{ client.orgName || client.name }}</div>
+                                            <div class="text-[10px] font-mono text-slate-400">{{ client.regNumber || client.member_id || 'CUST-' + client.id }}</div>
                                         </div>
                                     </div>
                                 </td>
                                 <td class="px-3 py-3">
-                                    <div class="font-medium text-slate-800">{{ client.name }}</div>
-                                    <div class="text-[11px] text-slate-500">{{ client.email }}</div>
+                                    <div class="font-medium text-slate-800">{{ client.pocName || client.name }}</div>
+                                    <div class="text-[11px] text-slate-500">{{ client.pocEmail || client.email }}</div>
                                 </td>
                                 <td class="px-3 py-3">
                                     <span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                        Enterprise SaaS
+                                        {{ client.industry || 'Enterprise SaaS' }}
                                     </span>
                                 </td>
                                 <td class="px-3 py-3 text-center font-mono font-bold text-indigo-700">
-                                    {{ getClientActiveProjectsCount(client.id) }} active
+                                    {{ client.projectsCount ?? getClientActiveProjectsCount(client.id) }}
                                 </td>
                                 <td class="px-3 py-3 text-center">
-                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                        Active
+                                    <span :class="['px-2 py-0.5 rounded-full text-[10px] font-bold border', (client.status || 'active') === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200']">
+                                        {{ (client.status || 'active') === 'active' ? 'Active' : 'Inactive' }}
                                     </span>
                                 </td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -1573,14 +1725,11 @@ function exportActiveTabCsv() {
             </div>
 
             <!-- --------------------------------------------------------- -->
-            <!-- TAB 5: CLIENT-HANDLING PERSON SETUP (ACCOUNT MAPPING)      -->
+            <!-- TAB 5: CLIENT ASSIGNMENTS                                  -->
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'account_managers'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Client-Handling Person Setup (Account Mapping)</h2>
-                        <p class="text-[11px] text-slate-500">Link clients with dedicated internal liaisons, escalation leads, and SLA service agreements.</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Client Team Assignments</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1588,7 +1737,7 @@ function exportActiveTabCsv() {
                             <input
                                 v-model="accountManagerSearch"
                                 type="text"
-                                placeholder="Search account mappings..."
+                                placeholder="Search client or user..."
                                 class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-indigo-600"
                             />
                         </div>
@@ -1597,59 +1746,60 @@ function exportActiveTabCsv() {
                             class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1 whitespace-nowrap shadow-2xs"
                         >
                             <UserCog class="w-3.5 h-3.5" />
-                            <span>Link Account Manager</span>
+                            <span>Assign Client</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Account Mapping Data Table -->
+                <!-- Client Assignment Data Table (Client & Users Only) -->
                 <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
                             <tr>
-                                <th class="px-4 py-3">Client Organization</th>
-                                <th class="px-3 py-3">Primary Account Manager</th>
-                                <th class="px-3 py-3">Backup / Escalation Contact</th>
-                                <th class="px-3 py-3">SLA Level</th>
-                                <th class="px-3 py-3">Assignment Date</th>
+                                <th class="px-4 py-3">Client</th>
+                                <th class="px-4 py-3">Assigned Users</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredAccountManagers.length === 0">
+                                <td colspan="3" class="px-4 py-8 text-center text-slate-400">
+                                    No client assignments found.
+                                </td>
+                            </tr>
                             <tr v-for="mapping in filteredAccountManagers" :key="mapping.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3 font-bold text-slate-900">
                                     {{ mapping.clientOrg }}
                                 </td>
-                                <td class="px-3 py-3">
-                                    <div class="flex items-center space-x-1.5 font-semibold text-indigo-700">
-                                        <UserCheck class="w-3.5 h-3.5 text-indigo-600" />
-                                        <span>{{ getStaffName(mapping.primaryManagerId) }}</span>
+                                <td class="px-4 py-3">
+                                    <div v-if="getAssignedMembers(mapping).length > 0" class="flex flex-wrap items-center gap-1.5">
+                                        <div
+                                            v-for="user in getAssignedMembers(mapping)"
+                                            :key="user.id"
+                                            class="inline-flex items-center space-x-1.5 px-2 py-0.5 rounded-lg bg-slate-50 border border-slate-200 text-xs"
+                                        >
+                                            <img
+                                                :src="user.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=50&h=50&fit=crop'"
+                                                class="w-4 h-4 rounded-full object-cover shrink-0"
+                                            />
+                                            <span class="font-medium text-slate-800">{{ user.name }}</span>
+                                            <span class="text-[10px] text-slate-400">({{ user.department || 'Staff' }})</span>
+                                        </div>
                                     </div>
-                                    <div class="text-[10px] text-slate-400 mt-0.5 truncate max-w-xs">{{ mapping.communicationPreference }}</div>
-                                </td>
-                                <td class="px-3 py-3 text-slate-700 font-medium">
-                                    {{ getStaffName(mapping.backupEscalationId) }}
-                                </td>
-                                <td class="px-3 py-3">
-                                    <span :class="['px-2 py-0.5 rounded-full text-[10px] border', getSlaBadge(mapping.slaLevel)]">
-                                        {{ mapping.slaLevel }} SLA
-                                    </span>
-                                </td>
-                                <td class="px-3 py-3 font-mono text-slate-600">
-                                    {{ mapping.assignmentDate }}
+                                    <span v-else class="text-slate-400 italic">No users assigned</span>
                                 </td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap">
                                     <button
                                         @click="openEditAccountManager(mapping)"
                                         class="p-1 text-slate-400 hover:text-indigo-600 rounded transition-colors"
-                                        title="Edit Mapping"
+                                        title="Edit Assignment"
                                     >
                                         <Edit3 class="w-3.5 h-3.5" />
                                     </button>
                                     <button
                                         @click="deleteAccountManager(mapping)"
                                         class="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors ml-1"
-                                        title="Remove Mapping"
+                                        title="Remove Assignment"
                                     >
                                         <Trash2 class="w-3.5 h-3.5" />
                                     </button>
@@ -1665,10 +1815,7 @@ function exportActiveTabCsv() {
             <!-- --------------------------------------------------------- -->
             <div v-if="activeTab === 'projects'" class="space-y-4">
                 <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-xs font-bold text-slate-900">Project Master Setup & Allocation</h2>
-                        <p class="text-[11px] text-slate-500">Configure client projects, team leads, auto-assigned liaisons, deadlines, and members.</p>
-                    </div>
+                    <h2 class="text-sm font-bold text-slate-900">Projects</h2>
 
                     <div class="flex items-center space-x-2 w-full sm:w-auto">
                         <div class="relative w-full sm:w-64">
@@ -1676,7 +1823,7 @@ function exportActiveTabCsv() {
                             <input
                                 v-model="projectSearch"
                                 type="text"
-                                placeholder="Search project name or client..."
+                                placeholder="Search projects..."
                                 class="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:bg-white focus:border-indigo-600"
                             />
                         </div>
@@ -1695,28 +1842,33 @@ function exportActiveTabCsv() {
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
                             <tr>
-                                <th class="px-4 py-3">Project Code</th>
+                                <th class="px-4 py-3">Code</th>
                                 <th class="px-3 py-3">Project Name</th>
-                                <th class="px-3 py-3">Client Name</th>
-                                <th class="px-3 py-3">Client-Handling Lead</th>
+                                <th class="px-3 py-3">Client</th>
+                                <th class="px-3 py-3">Handling Lead</th>
                                 <th class="px-3 py-3 text-center">Status</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
+                            <tr v-if="filteredProjects.length === 0">
+                                <td colspan="6" class="px-4 py-8 text-center text-slate-400">
+                                    No projects found.
+                                </td>
+                            </tr>
                             <tr v-for="proj in filteredProjects" :key="proj.id" class="hover:bg-slate-50/70 transition-colors">
                                 <td class="px-4 py-3 font-mono font-bold text-indigo-700">
-                                    PRJ-{{ proj.id }}
+                                    {{ proj.code || ('PRJ-' + proj.id) }}
                                 </td>
                                 <td class="px-3 py-3">
                                     <div class="font-bold text-slate-900">{{ proj.name }}</div>
-                                    <div class="text-[10px] text-slate-400 line-clamp-1 max-w-sm">{{ proj.description }}</div>
+                                    <div v-if="proj.description" class="text-[10px] text-slate-400 line-clamp-1 max-w-sm">{{ proj.description }}</div>
                                 </td>
                                 <td class="px-3 py-3 font-medium text-slate-800">
-                                    {{ proj.client?.name || 'Internal Project' }}
+                                    {{ proj.clientRecord?.org_name || proj.client?.name || 'Internal Project' }}
                                 </td>
                                 <td class="px-3 py-3 text-indigo-700 font-semibold">
-                                    {{ proj.client?.assigned_agent?.name || 'Sarah Jenkins (CS Lead)' }}
+                                    {{ proj.client?.assigned_agent?.name || 'Unassigned' }}
                                 </td>
                                 <td class="px-3 py-3 text-center">
                                     <span :class="['px-2 py-0.5 rounded-full text-[10px] border capitalize', getProjectStatusBadge(proj.status)]">
@@ -1928,16 +2080,16 @@ function exportActiveTabCsv() {
                         </div>
                     </div>
 
-                    <!-- Dynamic Department dropdown filters available Designations -->
+                    <!-- Department and Designation -->
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Dynamic Department *</label>
+                            <label class="font-bold text-slate-700">Department *</label>
                             <select v-model="employeeForm.department" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
                                 <option v-for="dept in departmentsList" :key="dept.id" :value="dept.name">{{ dept.name }}</option>
                             </select>
                         </div>
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Designation (Filtered) *</label>
+                            <label class="font-bold text-slate-700">Designation *</label>
                             <select v-model="employeeForm.designation" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
                                 <option v-for="desig in availableDesignationsForSelectedDept" :key="desig.id" :value="desig.title">
                                     {{ desig.title }} ({{ desig.band }})
@@ -1949,18 +2101,18 @@ function exportActiveTabCsv() {
 
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Direct Reporting Manager</label>
+                            <label class="font-bold text-slate-700">Reporting Manager</label>
                             <select v-model="employeeForm.reportingManagerId" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
                                 <option value="">No Direct Manager</option>
                                 <option v-for="mgr in staffEmployees" :key="mgr.id" :value="mgr.id">{{ mgr.name }} ({{ mgr.role }})</option>
                             </select>
                         </div>
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">System Role Toggle</label>
+                            <label class="font-bold text-slate-700">Role</label>
                             <select v-model="employeeForm.role" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold">
-                                <option value="Employee">Employee (Standard Staff)</option>
-                                <option value="Team Lead">Team Lead (Can Assign & Lock Delays)</option>
-                                <option value="Admin">System Administrator</option>
+                                <option value="Employee">Employee</option>
+                                <option value="Team Lead">Team Lead</option>
+                                <option value="Admin">Admin</option>
                             </select>
                         </div>
                     </div>
@@ -1996,13 +2148,13 @@ function exportActiveTabCsv() {
                         </div>
                         <div class="space-y-1">
                             <label class="font-bold text-slate-700">Registration Number</label>
-                            <input v-model="clientForm.regNumber" type="text" placeholder="REG-104928" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
+                            <input v-model="clientForm.regNumber" type="text" placeholder="e.g. REG-101" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono" />
                         </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Industry / Domain</label>
+                            <label class="font-bold text-slate-700">Industry</label>
                             <select v-model="clientForm.industry" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
                                 <option v-for="ind in initialClientsMetadata.industries" :key="ind" :value="ind">{{ ind }}</option>
                             </select>
@@ -2015,7 +2167,7 @@ function exportActiveTabCsv() {
 
                     <div class="space-y-1">
                         <label class="font-bold text-slate-700">Billing Address</label>
-                        <input v-model="clientForm.billingAddress" type="text" placeholder="100 Innovation Way, Suite 400" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl" />
+                        <input v-model="clientForm.billingAddress" type="text" placeholder="Billing address..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl" />
                     </div>
 
                     <div class="pt-2 flex items-center justify-end space-x-2">
@@ -2027,69 +2179,90 @@ function exportActiveTabCsv() {
         </div>
 
         <!-- ========================================================= -->
-        <!-- MODAL FORM 5: CLIENT-HANDLING PERSON SETUP                -->
+        <!-- MODAL FORM 5: CLIENT ASSIGNMENT                           -->
         <!-- ========================================================= -->
         <div v-if="isAccountManagerModalOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
             <div class="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-                    <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
+                    <div class="flex items-center space-x-2">
                         <UserCog class="w-4 h-4 text-indigo-600" />
-                        <span>Link Client-Handling Person (Account Mapping)</span>
-                    </h3>
-                    <button @click="isAccountManagerModalOpen = false" class="p-1 rounded-lg text-slate-400 hover:text-slate-600">
+                        <h3 class="text-sm font-bold text-slate-900">
+                            {{ editingAccountManager ? 'Edit Client Assignment' : 'Assign Client' }}
+                        </h3>
+                    </div>
+                    <button @click="isAccountManagerModalOpen = false" class="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
                         <X class="w-4 h-4" />
                     </button>
                 </div>
 
-                <form @submit.prevent="saveAccountManager" class="space-y-3 text-xs">
+                <div v-if="!editingAccountManager && assignableClientSelectOptions.length === 0" class="p-4 text-center bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs">
+                    All clients currently have active assignments. To assign another, edit an existing assignment or register a new client first.
+                </div>
+
+                <form v-else @submit.prevent="saveAccountManager" class="space-y-4 text-xs">
+                    <!-- Client Selection (Already-assigned clients don't show when creating) -->
                     <div class="space-y-1">
-                        <label class="font-bold text-slate-700">Client Organization *</label>
-                        <select v-model="accountManagerForm.clientId" @change="onMappingClientSelect" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
-                            <option v-for="c in clientUsers" :key="c.id" :value="c.id">{{ c.name }}</option>
-                        </select>
+                        <label class="font-bold text-slate-700 flex items-center space-x-1.5">
+                            <Building2 class="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Client *</span>
+                        </label>
+                        <SearchableSelect
+                            v-model="accountManagerForm.clientId"
+                            :options="assignableClientSelectOptions"
+                            placeholder="Select client..."
+                            :disabled="!!editingAccountManager"
+                        />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
-                        <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Primary Handling Person *</label>
-                            <select v-model="accountManagerForm.primaryManagerId" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-indigo-700">
-                                <option v-for="emp in staffEmployees" :key="emp.id" :value="emp.id">
-                                    {{ emp.name }} ({{ emp.designation || emp.role }})
-                                </option>
-                            </select>
+                    <!-- Assigned Users / Staff List -->
+                    <div class="space-y-2">
+                        <label class="font-bold text-slate-700 flex items-center space-x-1.5">
+                            <Users class="w-3.5 h-3.5 text-indigo-600" />
+                            <span>Assigned Users ({{ accountManagerForm.assignedMemberIds.length }}) *</span>
+                        </label>
+
+                        <!-- Selected Users Chips Container -->
+                        <div v-if="accountManagerForm.assignedMemberIds.length > 0" class="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-slate-50 border border-slate-200 rounded-xl">
+                            <div
+                                v-for="memberId in accountManagerForm.assignedMemberIds"
+                                :key="memberId"
+                                class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs bg-white border border-slate-200 shadow-2xs"
+                            >
+                                <img
+                                    :src="getStaffUser(memberId)?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=50&h=50&fit=crop'"
+                                    class="w-4 h-4 rounded-full object-cover shrink-0"
+                                />
+                                <span class="font-bold text-slate-800 text-[11px]">{{ getStaffUser(memberId)?.name || 'User #' + memberId }}</span>
+                                <span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-slate-100 text-slate-600">
+                                    {{ getStaffUser(memberId)?.department || 'Staff' }}
+                                </span>
+                                <button
+                                    type="button"
+                                    @click="removeAssignedMember(memberId)"
+                                    class="p-0.5 rounded hover:bg-rose-100 text-slate-400 hover:text-rose-700 transition-colors"
+                                    title="Remove user"
+                                >
+                                    <X class="w-3 h-3" />
+                                </button>
+                            </div>
                         </div>
-                        <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Backup / Escalation Contact</label>
-                            <select v-model="accountManagerForm.backupEscalationId" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
-                                <option value="">No Escalation Contact</option>
-                                <option v-for="emp in staffEmployees" :key="emp.id" :value="emp.id">
-                                    {{ emp.name }} ({{ emp.role }})
-                                </option>
-                            </select>
-                        </div>
+
+                        <!-- Multi-select User Dropdown -->
+                        <SearchableSelect
+                            v-model="accountManagerForm.assignedMemberIds"
+                            :options="staffSelectOptions"
+                            multiple
+                            placeholder="Select users to assign..."
+                        />
                     </div>
 
-                    <div class="grid grid-cols-2 gap-2">
-                        <div class="space-y-1">
-                            <label class="font-bold text-slate-700">SLA Level</label>
-                            <select v-model="accountManagerForm.slaLevel" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold">
-                                <option v-for="sla in slaLevels" :key="sla" :value="sla">{{ sla }} SLA</option>
-                            </select>
-                        </div>
-                        <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Communication Preference</label>
-                            <input v-model="accountManagerForm.communicationPreference" type="text" placeholder="e.g. Dedicated Slack + Weekly Call" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl" />
-                        </div>
-                    </div>
-
-                    <div class="space-y-1">
-                        <label class="font-bold text-slate-700">Operational Notes</label>
-                        <textarea v-model="accountManagerForm.notes" rows="2" placeholder="Special SLAs, contract notes, escalation rules..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl resize-none"></textarea>
-                    </div>
-
-                    <div class="pt-2 flex items-center justify-end space-x-2">
-                        <button type="button" @click="isAccountManagerModalOpen = false" class="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-700 font-semibold">Cancel</button>
-                        <button type="submit" class="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">Save Mapping</button>
+                    <div class="pt-2 flex items-center justify-end space-x-2 border-t border-slate-100">
+                        <button type="button" @click="isAccountManagerModalOpen = false" class="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold transition-colors">
+                            Cancel
+                        </button>
+                        <button type="submit" class="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs transition-colors">
+                            Save Assignment
+                        </button>
                     </div>
                 </form>
             </div>
@@ -2103,7 +2276,7 @@ function exportActiveTabCsv() {
                 <div class="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 class="text-sm font-bold text-slate-900 flex items-center space-x-2">
                         <FolderKanban class="w-4 h-4 text-indigo-600" />
-                        <span>{{ editingProject ? 'Edit Project Master' : 'Create New Project' }}</span>
+                        <span>{{ editingProject ? 'Edit Project' : 'Create Project' }}</span>
                     </h3>
                     <button @click="isProjectModalOpen = false" class="p-1 rounded-lg text-slate-400 hover:text-slate-600">
                         <X class="w-4 h-4" />
@@ -2114,7 +2287,7 @@ function exportActiveTabCsv() {
                     <div class="grid grid-cols-3 gap-2">
                         <div class="space-y-1">
                             <label class="font-bold text-slate-700">Project Code *</label>
-                            <input v-model="projectForm.code" type="text" required placeholder="PRJ-101" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono uppercase" />
+                            <input v-model="projectForm.code" type="text" required placeholder="e.g. PRJ-101" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-mono uppercase" />
                         </div>
                         <div class="col-span-2 space-y-1">
                             <label class="font-bold text-slate-700">Project Name *</label>
@@ -2125,55 +2298,46 @@ function exportActiveTabCsv() {
                     <!-- Client Selection with Auto-Fill of Client-Handling Lead -->
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Client Dropdown *</label>
-                            <select v-model="projectForm.clientId" @change="onProjectClientChange" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl">
-                                <option value="">No Client (Internal Project)</option>
-                                <option v-for="c in clientUsers" :key="c.id" :value="c.id">{{ c.name }}</option>
-                            </select>
+                            <label class="font-bold text-slate-700">Client *</label>
+                            <SearchableSelect
+                                v-model="projectForm.clientId"
+                                :options="clientSelectOptions"
+                                placeholder="Select client..."
+                                @change="onProjectClientChange"
+                            />
                         </div>
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Client-Handling Lead (Auto-filled)</label>
-                            <input v-model="projectForm.clientHandlingLead" type="text" readonly class="w-full px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 cursor-not-allowed font-medium" />
+                            <label class="font-bold text-slate-700">Client Lead</label>
+                            <input v-model="projectForm.clientHandlingLead" type="text" readonly class="w-full min-h-[38px] px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-600 cursor-not-allowed font-medium text-xs" />
                         </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-2">
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Assign Team Lead *</label>
-                            <select v-model="projectForm.teamLeadId" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-indigo-700">
-                                <option v-for="lead in staffEmployees" :key="lead.id" :value="lead.id">
-                                    {{ lead.name }} ({{ lead.is_team_lead ? 'Team Lead' : lead.role }})
-                                </option>
-                            </select>
+                            <label class="font-bold text-slate-700">Team Lead *</label>
+                            <SearchableSelect
+                                v-model="projectForm.teamLeadId"
+                                :options="staffSelectOptions"
+                                placeholder="Choose Team Lead..."
+                            />
                         </div>
                         <div class="space-y-1">
                             <label class="font-bold text-slate-700">Status</label>
-                            <select v-model="projectForm.status" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold">
+                            <select v-model="projectForm.status" class="w-full min-h-[38px] px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl font-bold">
                                 <option v-for="st in projectStatuses" :key="st" :value="st">{{ st }}</option>
                             </select>
                         </div>
                     </div>
 
-                    <!-- Multi-select Team Members -->
+                    <!-- Team Members -->
                     <div class="space-y-1">
-                        <label class="font-bold text-slate-700">Multi-select Team Members</label>
-                        <div class="max-h-24 overflow-y-auto p-2 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
-                            <div
-                                v-for="emp in staffEmployees"
-                                :key="emp.id"
-                                @click="toggleProjectTeamMember(emp.id)"
-                                :class="[
-                                    'flex items-center justify-between p-1.5 rounded-lg cursor-pointer text-xs transition-colors',
-                                    projectForm.teamMemberIds.includes(emp.id) ? 'bg-indigo-50 border border-indigo-200 font-semibold text-indigo-900' : 'hover:bg-slate-100 text-slate-700'
-                                ]"
-                            >
-                                <div class="flex items-center space-x-1.5">
-                                    <img :src="emp.avatar" class="w-4 h-4 rounded-full object-cover" />
-                                    <span>{{ emp.name }}</span>
-                                </div>
-                                <span v-if="projectForm.teamMemberIds.includes(emp.id)" class="text-indigo-600 font-bold">✓</span>
-                            </div>
-                        </div>
+                        <label class="font-bold text-slate-700">Team Members</label>
+                        <SearchableSelect
+                            v-model="projectForm.teamMemberIds"
+                            :options="staffSelectOptions"
+                            multiple
+                            placeholder="Select team members..."
+                        />
                     </div>
 
                     <div class="grid grid-cols-2 gap-2">
@@ -2182,14 +2346,14 @@ function exportActiveTabCsv() {
                             <input v-model="projectForm.startDate" type="date" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl" />
                         </div>
                         <div class="space-y-1">
-                            <label class="font-bold text-slate-700">Target Completion Date</label>
+                            <label class="font-bold text-slate-700">Target Date</label>
                             <input v-model="projectForm.targetDate" type="date" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl" />
                         </div>
                     </div>
 
                     <div class="space-y-1">
                         <label class="font-bold text-slate-700">Description</label>
-                        <textarea v-model="projectForm.description" rows="2" placeholder="Project goals and scope..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl resize-none"></textarea>
+                        <textarea v-model="projectForm.description" rows="2" placeholder="Optional description..." class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl resize-none"></textarea>
                     </div>
 
                     <div class="pt-2 flex items-center justify-end space-x-2">

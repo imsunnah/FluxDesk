@@ -7,7 +7,11 @@ use App\Events\MessageSent;
 use App\Jobs\AuditLogMessage;
 use App\Jobs\ProcessOfflineNotification;
 use App\Models\CannedResponse;
+use App\Models\Client;
+use App\Models\ClientAssignment;
 use App\Models\Conversation;
+use App\Models\Department;
+use App\Models\Designation;
 use App\Models\Message;
 use App\Models\Project;
 use App\Models\User;
@@ -224,17 +228,32 @@ class ChatController extends Controller
               ->orWhereIn('role', ['admin', 'agent', 'staff', 'both', 'System Administrator', 'Senior Technical Agent', 'Customer Success Lead']);
         })->select('id', 'member_id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_customer', 'is_team_lead')->get();
 
-        $departments = [
-            'Engineering',
-            'Technical Support',
-            'Customer Success',
-            'Quality Assurance (QA)',
-            'DevOps & Infrastructure',
-            'Product & Design',
-            'Management & Operations'
-        ];
+        // Separated Admin Setup Tables Data
+        $departments = Department::with('hod:id,name,email,avatar')
+            ->withCount('designations')
+            ->orderBy('name', 'asc')
+            ->get();
 
-        $projects = Project::with(['client:id,name,email,member_id'])
+        $designations = Designation::with('department:id,name,code')
+            ->orderBy('title', 'asc')
+            ->get();
+
+        $clients = Client::with(['user:id,name,email,avatar', 'projects', 'assignment'])
+            ->withCount('projects')
+            ->orderBy('id', 'desc')
+            ->get();
+
+        $clientAssignments = ClientAssignment::with([
+            'client:id,org_name,poc_name,poc_email,status',
+            'primaryManager:id,name,email,avatar,role,department',
+            'backupEscalation:id,name,email,avatar,role,department'
+        ])->orderBy('id', 'desc')->get();
+
+        $projects = Project::with([
+            'client:id,name,email,member_id',
+            'clientRecord:id,org_name,poc_name',
+            'teamLead:id,name,email,avatar,role'
+        ])
             ->withCount(['tasks', 'tickets', 'clients'])
             ->orderBy('id', 'desc')
             ->get();
@@ -263,9 +282,12 @@ class ChatController extends Controller
             'agents' => $allMembers,
             'staffAgents' => $staffAgents,
             'departments' => $departments,
+            'designations' => $designations,
+            'clients' => $clients,
+            'clientAssignments' => $clientAssignments,
+            'projects' => $projects,
             'currentAgent' => $currentAgent,
             'tasks' => $tasks,
-            'projects' => $projects,
             'initialView' => $view,
             'filters' => [
                 'filter' => $filter,
@@ -571,6 +593,35 @@ class ChatController extends Controller
         $user->save();
 
         return redirect()->back();
+    }
+
+    /**
+     * Admin: Update member / employee / customer in the database.
+     */
+    public function updateMember(Request $request, User $user)
+    {
+        $current = Auth::user();
+        if (!$current || !$current->is_admin) {
+            abort(403, 'Only admins can update members.');
+        }
+
+        $validated = $request->validate([
+            'member_id' => 'nullable|string|max:50|unique:users,member_id,' . $user->id,
+            'name' => 'sometimes|required|string|max:100',
+            'email' => 'sometimes|required|email|max:150|unique:users,email,' . $user->id,
+            'role' => 'nullable|string|max:100',
+            'department' => 'nullable|string|max:100',
+            'designation' => 'nullable|string|max:100',
+            'is_customer' => 'nullable|boolean',
+            'is_team_lead' => 'nullable|boolean',
+            'is_admin' => 'nullable|boolean',
+            'project_id' => 'nullable|exists:projects,id',
+            'assigned_agent_id' => 'nullable|exists:users,id',
+        ]);
+
+        $user->update($validated);
+
+        return redirect()->back()->with('success', 'Member updated successfully.');
     }
 
     /**
@@ -1003,17 +1054,37 @@ class ChatController extends Controller
         }
 
         $validated = $request->validate([
+            'code' => 'nullable|string|max:50',
             'name' => 'required|string|max:150',
-            'client_id' => 'nullable|exists:users,id',
+            'client_id' => 'nullable',
+            'team_lead_id' => 'nullable|exists:users,id',
+            'team_member_ids' => 'nullable|array',
+            'start_date' => 'nullable|date',
+            'target_date' => 'nullable|date',
             'description' => 'nullable|string',
-            'status' => 'nullable|string|in:active,completed,on_hold',
+            'status' => 'nullable|string|max:50',
         ]);
 
+        $clientId = $validated['client_id'] ?? null;
+        if ($clientId) {
+            $clientModel = Client::find($clientId);
+            if ($clientModel && $clientModel->user_id) {
+                $clientId = $clientModel->user_id;
+            }
+        }
+
+        $code = $validated['code'] ?? ('PRJ-' . mt_rand(100, 999));
+
         Project::create([
+            'code' => $code,
             'name' => $validated['name'],
-            'client_id' => $validated['client_id'] ?? null,
+            'client_id' => $clientId,
+            'team_lead_id' => $validated['team_lead_id'] ?? null,
+            'team_member_ids' => $validated['team_member_ids'] ?? [],
+            'start_date' => $validated['start_date'] ?? null,
+            'target_date' => $validated['target_date'] ?? null,
             'description' => $validated['description'] ?? null,
-            'status' => $validated['status'] ?? 'active',
+            'status' => $validated['status'] ?? 'Active',
         ]);
 
         return redirect()->back()->with('success', 'Project created successfully.');
@@ -1030,11 +1101,23 @@ class ChatController extends Controller
         }
 
         $validated = $request->validate([
+            'code' => 'nullable|string|max:50',
             'name' => 'sometimes|required|string|max:150',
-            'client_id' => 'nullable|exists:users,id',
+            'client_id' => 'nullable',
+            'team_lead_id' => 'nullable|exists:users,id',
+            'team_member_ids' => 'nullable|array',
+            'start_date' => 'nullable|date',
+            'target_date' => 'nullable|date',
             'description' => 'nullable|string',
-            'status' => 'sometimes|required|string|in:active,completed,on_hold',
+            'status' => 'sometimes|nullable|string|max:50',
         ]);
+
+        if (isset($validated['client_id']) && $validated['client_id']) {
+            $clientModel = Client::find($validated['client_id']);
+            if ($clientModel && $clientModel->user_id) {
+                $validated['client_id'] = $clientModel->user_id;
+            }
+        }
 
         $project->update($validated);
 

@@ -259,15 +259,13 @@ const donutSegments = computed(() => {
 });
 
 // =========================================================
-// DETAILED AUDIT TABLE: LIST OF ALL COMPLETED & LATE TASKS
-// Columns: Task Name, Assignee, Due Date, Completion Date,
-// Delay Duration, Reason, and Locked By.
+// TEAM & EMPLOYEE TASKS LIST WITH STATUS & AUDIT
+// Displays all tasks of the team in list format with status,
+// assignees, due dates, delay notes, and locked records.
 // =========================================================
 const auditTasks = computed(() => {
-    // Only show completed or late tasks as specified
-    let list = props.tasks.filter((t) => {
-        return t.status === 'done' || isTaskOverdue(t);
-    });
+    // Show all tasks from active scope (admin sees all, team lead sees all team tasks, employee sees her own)
+    let list = [...props.tasks];
 
     // Search query
     if (searchQuery.value) {
@@ -292,6 +290,14 @@ const auditTasks = computed(() => {
         list = list.filter(t => t.status === 'done');
     } else if (filterStatus.value === 'late_only') {
         list = list.filter(t => isTaskOverdue(t));
+    } else if (filterStatus.value === 'pending') {
+        list = list.filter(t => t.status !== 'done');
+    } else if (filterStatus.value === 'todo') {
+        list = list.filter(t => t.status === 'todo');
+    } else if (filterStatus.value === 'in_progress') {
+        list = list.filter(t => t.status === 'in_progress');
+    } else if (filterStatus.value === 'review') {
+        list = list.filter(t => t.status === 'review');
     }
 
     // Filter delay category
@@ -318,6 +324,9 @@ const auditTasks = computed(() => {
         }
         if (sortField.value === 'due_date') {
             return sortDirection.value === 'desc' ? (b.due_date || '').localeCompare(a.due_date || '') : (a.due_date || '').localeCompare(b.due_date || '');
+        }
+        if (sortField.value === 'status') {
+            return sortDirection.value === 'desc' ? (b.status || '').localeCompare(a.status || '') : (a.status || '').localeCompare(b.status || '');
         }
         return 0;
     });
@@ -379,19 +388,19 @@ function exportCsv() {
                         title="Return to Workspace Board"
                     >
                         <Kanban class="w-3.5 h-3.5 text-indigo-600" />
-                        <span>← Back to Workspace</span>
+                        <span>← Back to Task Board</span>
                     </button>
 
                     <div>
                         <div class="flex items-center space-x-2">
                             <BarChart3 class="w-5 h-5 text-indigo-600" />
-                            <h2 class="text-base font-bold text-slate-900">Analytics & Late Task Insights</h2>
+                            <h2 class="text-base font-bold text-slate-900">Overview & All Data</h2>
                             <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                                Tab / View 2
+                                {{ isLeadMode ? 'Team & Organization' : 'My Tasks Overview' }}
                             </span>
                         </div>
                         <p class="text-xs text-slate-500 mt-0.5">
-                            Delays breakdown, cause analysis, team member metrics, and hierarchical reason audit.
+                            {{ isLeadMode ? 'Complete team data, task breakdown, employee metrics, and audit log.' : 'Personal task summary, on-time rate, and comprehensive history.' }}
                         </p>
                     </div>
                 </div>
@@ -674,9 +683,9 @@ function exportCsv() {
                     <div class="flex items-center space-x-2">
                         <FileText class="w-4 h-4 text-indigo-600" />
                         <div>
-                            <h3 class="text-xs font-bold text-slate-900">Detailed Late & Completed Tasks Audit Table</h3>
+                            <h3 class="text-xs font-bold text-slate-900">Team & Employee Tasks List with Status</h3>
                             <span class="text-[11px] text-slate-500">
-                                Showing {{ auditTasks.length }} completed and overdue tasks with hierarchical locking records
+                                Showing {{ auditTasks.length }} tasks across the team with real-time status and audit records
                             </span>
                         </div>
                     </div>
@@ -708,9 +717,13 @@ function exportCsv() {
                         v-model="filterStatus"
                         class="px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:border-indigo-600"
                     >
-                        <option value="all">All Audited Tasks</option>
-                        <option value="late_only">🔴 Overdue / Late Only</option>
+                        <option value="all">All Statuses</option>
+                        <option value="pending">Active (To Do, In Progress, Review)</option>
+                        <option value="todo">To Do</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="review">In Review</option>
                         <option value="done">🟢 Completed Tasks Only</option>
+                        <option value="late_only">🔴 Overdue / Late Only</option>
                     </select>
 
                     <!-- Delay Category Filter -->
@@ -764,15 +777,18 @@ function exportCsv() {
                             <tr>
                                 <th class="px-4 py-3">1. Task Name</th>
                                 <th class="px-3 py-3">2. Assignee</th>
+                                <th @click="toggleSort('status')" class="px-3 py-3 cursor-pointer hover:text-slate-800">
+                                    3. Status
+                                </th>
                                 <th @click="toggleSort('due_date')" class="px-3 py-3 cursor-pointer hover:text-slate-800">
-                                    3. Due Date
+                                    4. Due Date
                                 </th>
-                                <th class="px-3 py-3">4. Completion Date</th>
+                                <th class="px-3 py-3">5. Completion Date</th>
                                 <th @click="toggleSort('delay_duration')" class="px-3 py-3 cursor-pointer hover:text-slate-800">
-                                    5. Delay Duration
+                                    6. Delay Duration
                                 </th>
-                                <th class="px-3 py-3">6. Reason (Category + Explanation)</th>
-                                <th class="px-3 py-3">7. Locked By & Review Status</th>
+                                <th class="px-3 py-3">7. Reason (Category + Explanation)</th>
+                                <th class="px-3 py-3">8. Locked By & Review Status</th>
                                 <th class="px-4 py-3 text-right">Actions</th>
                             </tr>
                         </thead>
@@ -808,12 +824,28 @@ function exportCsv() {
                                     </div>
                                 </td>
 
-                                <!-- Column 3: Due Date -->
+                                <!-- Column 3: Status -->
+                                <td class="px-3 py-3 whitespace-nowrap">
+                                    <span v-if="task.status === 'todo'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                        To Do
+                                    </span>
+                                    <span v-else-if="task.status === 'in_progress'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                        In Progress
+                                    </span>
+                                    <span v-else-if="task.status === 'review'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                        In Review
+                                    </span>
+                                    <span v-else-if="task.status === 'done'" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        Completed
+                                    </span>
+                                </td>
+
+                                <!-- Column 4: Due Date -->
                                 <td class="px-3 py-3 font-mono whitespace-nowrap text-slate-700">
                                     {{ task.due_date || 'N/A' }}
                                 </td>
 
-                                <!-- Column 4: Completion Date -->
+                                <!-- Column 5: Completion Date -->
                                 <td class="px-3 py-3 font-mono whitespace-nowrap">
                                     <span v-if="task.status === 'done'" class="text-emerald-700 font-bold flex items-center space-x-1">
                                         <CheckCircle2 class="w-3.5 h-3.5 text-emerald-600" />
@@ -910,8 +942,8 @@ function exportCsv() {
                             </tr>
 
                             <tr v-if="auditTasks.length === 0">
-                                <td colspan="8" class="py-12 text-center text-slate-400 text-xs">
-                                    No completed or late tasks match your filter criteria.
+                                <td colspan="9" class="py-12 text-center text-slate-400 text-xs">
+                                    No tasks match your filter criteria.
                                 </td>
                             </tr>
                         </tbody>

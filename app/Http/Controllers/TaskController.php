@@ -64,14 +64,15 @@ class TaskController extends Controller
     public function update(Request $request, Task $task)
     {
         $user = Auth::user();
-        $isLeadOrAdmin = $user->is_team_lead || $user->is_admin;
+        $isAdmin = (bool) $user->is_admin;
 
         $isOwnerOrAssignee = $task->assigned_to === $user->id 
             || $task->created_by === $user->id 
             || $task->assignees()->where('users.id', $user->id)->exists();
 
-        if (!$isLeadOrAdmin && !$isOwnerOrAssignee) {
-            abort(403, 'You do not have permission to update this task.');
+        // Team lead should not edit team tasks; only admin or the task owner/assignee can edit
+        if (!$isAdmin && !$isOwnerOrAssignee) {
+            abort(403, 'You do not have permission to edit this team task. Team leads can only edit their own tasks.');
         }
 
         $rules = [
@@ -188,6 +189,18 @@ class TaskController extends Controller
 
     public function destroy(Task $task)
     {
+        $user = Auth::user();
+        $isAdmin = (bool) $user->is_admin;
+
+        $isOwnerOrAssignee = $task->assigned_to === $user->id 
+            || $task->created_by === $user->id 
+            || $task->assignees()->where('users.id', $user->id)->exists();
+
+        // Team lead should not delete team tasks; only admin or the task owner/assignee can delete
+        if (!$isAdmin && !$isOwnerOrAssignee) {
+            abort(403, 'You do not have permission to delete this team task.');
+        }
+
         $task->delete();
 
         return back()->with('success', 'Task deleted.');

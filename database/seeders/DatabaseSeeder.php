@@ -3,7 +3,11 @@
 namespace Database\Seeders;
 
 use App\Models\CannedResponse;
+use App\Models\Client;
+use App\Models\ClientAssignment;
 use App\Models\Conversation;
+use App\Models\Department;
+use App\Models\Designation;
 use App\Models\Message;
 use App\Models\Project;
 use App\Models\Task;
@@ -16,10 +20,12 @@ class DatabaseSeeder extends Seeder
 {
     /**
      * Seed the application's database with clean, standardized records:
-     * - Admin
-     * - User 1 (Team Lead), User 2 (Employee), User 3 (Employee)
-     * - Customer 1, Customer 2, Customer 3
-     * - Projects 1, 2, 3
+     * - Admin & Staff / Employees
+     * - Separated Departments Table
+     * - Separated Designations Table
+     * - Separated Clients Table
+     * - Separated Client Assignments (Assign Table: Client-Handling Team)
+     * - Separated Projects Table (with Team Lead and Member assignments)
      * - Tasks with overtime ratio and completion remarks
      * - Tickets and Direct / Group Chats
      */
@@ -94,7 +100,7 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // 3. CUSTOMERS / CLIENTS
+        // 3. CUSTOMERS / CLIENT LOGIN USERS
         $customer1 = User::updateOrCreate(
             ['email' => 'customer1@fluxdesk.io'],
             [
@@ -146,11 +152,184 @@ class DatabaseSeeder extends Seeder
             ]
         );
 
-        // 4. PROJECTS (Created according to Client; one client can hold multiple projects!)
+        // 4. SEPARATED DEPARTMENTS TABLE
+        $deptEng = Department::updateOrCreate(
+            ['code' => 'ENG'],
+            [
+                'name' => 'Engineering',
+                'description' => 'Core software engineering, architecture, frontend & backend engineering operations.',
+                'hod_id' => $user1->id,
+                'status' => 'active',
+            ]
+        );
+        $deptSupport = Department::updateOrCreate(
+            ['code' => 'SUP'],
+            [
+                'name' => 'Technical Support',
+                'description' => 'Tier 1 to Tier 3 customer technical inquiries, bug escalations, and incident triage.',
+                'hod_id' => $user2->id,
+                'status' => 'active',
+            ]
+        );
+        $deptCS = Department::updateOrCreate(
+            ['code' => 'CS'],
+            [
+                'name' => 'Customer Success',
+                'description' => 'Client account management, onboarding, retention, and SLA delivery tracking.',
+                'hod_id' => $admin->id,
+                'status' => 'active',
+            ]
+        );
+        $deptQA = Department::updateOrCreate(
+            ['code' => 'QA'],
+            [
+                'name' => 'Quality Assurance',
+                'description' => 'Automated test suite maintenance, manual validation, performance testing, and release gating.',
+                'hod_id' => $user3->id,
+                'status' => 'active',
+            ]
+        );
+        $deptOps = Department::updateOrCreate(
+            ['code' => 'OPS'],
+            [
+                'name' => 'DevOps & Infrastructure',
+                'description' => 'Cloud infrastructure orchestration, CI/CD pipelines, Kubernetes clusters, and security observability.',
+                'hod_id' => $user1->id,
+                'status' => 'active',
+            ]
+        );
+        $deptProduct = Department::updateOrCreate(
+            ['code' => 'PRD'],
+            [
+                'name' => 'Product & Design',
+                'description' => 'User experience research, UI architecture, product requirement definitions, and prototyping.',
+                'hod_id' => $user3->id,
+                'status' => 'active',
+            ]
+        );
+        $deptMgmt = Department::updateOrCreate(
+            ['code' => 'MGT'],
+            [
+                'name' => 'Management & Operations',
+                'description' => 'Executive governance, administrative oversight, resource allocation, and organizational strategy.',
+                'hod_id' => $admin->id,
+                'status' => 'active',
+            ]
+        );
+
+        // 5. SEPARATED DESIGNATIONS TABLE
+        $designations = [
+            ['title' => 'Principal Operations Director', 'department_id' => $deptMgmt->id, 'department_name' => 'Management & Operations', 'band' => 'Executive', 'responsibilities' => 'Strategic organizational planning, cross-functional resource allocation, and operational excellence.'],
+            ['title' => 'Staff Solutions Architect & Lead', 'department_id' => $deptEng->id, 'department_name' => 'Engineering', 'band' => 'Lead', 'responsibilities' => 'System architecture, technical guidance, high-level code reviews, and team leadership.'],
+            ['title' => 'Senior Backend Developer', 'department_id' => $deptEng->id, 'department_name' => 'Engineering', 'band' => 'Senior', 'responsibilities' => 'API design, database optimization, backend service reliability, and async queues.'],
+            ['title' => 'Lead UI/UX Frontend Engineer', 'department_id' => $deptProduct->id, 'department_name' => 'Product & Design', 'band' => 'Lead', 'responsibilities' => 'Component library creation, design system adherence, frontend performance, and micro-interactions.'],
+            ['title' => 'Senior DevOps & Cloud Engineer', 'department_id' => $deptOps->id, 'department_name' => 'DevOps & Infrastructure', 'band' => 'Senior', 'responsibilities' => 'Terraform IaC, Docker clustering, zero-downtime deployments, and telemetry.'],
+            ['title' => 'Customer Success Lead', 'department_id' => $deptCS->id, 'department_name' => 'Customer Success', 'band' => 'Senior', 'responsibilities' => 'Client relations, SLA metrics, customer satisfaction reviews, and executive escalations.'],
+            ['title' => 'QA Automation Engineer', 'department_id' => $deptQA->id, 'department_name' => 'Quality Assurance', 'band' => 'Mid', 'responsibilities' => 'End-to-end Cypress and Playwright testing, regression test suites, and load test scripts.'],
+        ];
+        foreach ($designations as $d) {
+            Designation::updateOrCreate(
+                ['title' => $d['title'], 'department_id' => $d['department_id']],
+                $d
+            );
+        }
+
+        // 6. SEPARATED CLIENTS TABLE
+        $cl1 = Client::updateOrCreate(
+            ['org_name' => 'Acme Corporation'],
+            [
+                'user_id' => $customer1->id,
+                'reg_number' => 'ACM-US-8921',
+                'industry' => 'Enterprise Cloud & Logistics',
+                'billing_address' => '100 Silicon Blvd, Suite 400, San Jose, CA 95134',
+                'poc_name' => 'Customer 1 (Acme Corp)',
+                'poc_email' => 'customer1@fluxdesk.io',
+                'poc_phone' => '+1 (555) 234-5678',
+                'status' => 'active',
+            ]
+        );
+
+        $cl2 = Client::updateOrCreate(
+            ['org_name' => 'Nexus Health Systems'],
+            [
+                'user_id' => $customer2->id,
+                'reg_number' => 'NXH-US-4432',
+                'industry' => 'Healthcare & Telehealth Informatics',
+                'billing_address' => '450 Medical Center Way, Boston, MA 02115',
+                'poc_name' => 'Customer 2 (Nexus Health)',
+                'poc_email' => 'customer2@fluxdesk.io',
+                'poc_phone' => '+1 (555) 345-6789',
+                'status' => 'active',
+            ]
+        );
+
+        $cl3 = Client::updateOrCreate(
+            ['org_name' => 'Apex Retail Global'],
+            [
+                'user_id' => $customer3->id,
+                'reg_number' => 'APX-UK-1120',
+                'industry' => 'High-Growth E-Commerce & Retail',
+                'billing_address' => '12 Oxford Street, London, W1D 1BS, UK',
+                'poc_name' => 'Customer 3 (Apex Retail)',
+                'poc_email' => 'customer3@fluxdesk.io',
+                'poc_phone' => '+1 (555) 456-7890',
+                'status' => 'active',
+            ]
+        );
+
+        // 7. SEPARATED CLIENT ASSIGNMENTS (ASSIGN TABLE)
+        ClientAssignment::updateOrCreate(
+            ['client_id' => $cl1->id],
+            [
+                'primary_manager_id' => $user1->id,
+                'backup_escalation_id' => $admin->id,
+                'selected_departments' => ['Engineering', 'DevOps & Infrastructure'],
+                'assigned_member_ids' => [$user1->id, $user2->id],
+                'sla_level' => 'VIP',
+                'assignment_date' => Carbon::now()->subMonths(3)->toDateString(),
+                'communication_preference' => 'Dedicated Slack Connect + 24/7 Hotline',
+                'notes' => 'Primary enterprise account for North America cloud operations. Escalate critical downtime to User 1 immediately.',
+            ]
+        );
+
+        ClientAssignment::updateOrCreate(
+            ['client_id' => $cl2->id],
+            [
+                'primary_manager_id' => $user2->id,
+                'backup_escalation_id' => $user1->id,
+                'selected_departments' => ['Engineering', 'Quality Assurance'],
+                'assigned_member_ids' => [$user2->id, $user3->id],
+                'sla_level' => 'Gold',
+                'assignment_date' => Carbon::now()->subMonths(2)->toDateString(),
+                'communication_preference' => 'Bi-Weekly Zoom Review & Dedicated Queue',
+                'notes' => 'HIPAA compliant infrastructure. All tickets require QA approval before deployment.',
+            ]
+        );
+
+        ClientAssignment::updateOrCreate(
+            ['client_id' => $cl3->id],
+            [
+                'primary_manager_id' => $user3->id,
+                'backup_escalation_id' => $user1->id,
+                'selected_departments' => ['Product & Design', 'Engineering'],
+                'assigned_member_ids' => [$user1->id, $user2->id, $user3->id],
+                'sla_level' => 'Standard',
+                'assignment_date' => Carbon::now()->subMonth()->toDateString(),
+                'communication_preference' => 'Email Dispatch & Weekly Standup',
+                'notes' => 'High seasonal transaction volume. Peak traffic monitoring during sales events.',
+            ]
+        );
+
+        // 8. SEPARATED PROJECTS TABLE (Linked to Client, Team Lead, and Members)
         $p1 = Project::updateOrCreate(
             ['name' => 'Project 1A — Acme Cloud ERP'],
             [
+                'code' => 'PRJ-ACM-01',
                 'client_id' => $customer1->id,
+                'team_lead_id' => $user1->id,
+                'team_member_ids' => [$user1->id, $user2->id],
+                'start_date' => '2026-01-15',
+                'target_date' => '2026-12-31',
                 'description' => 'Enterprise Cloud ERP suite featuring multi-tenant databases and automated billing.',
                 'status' => 'active',
             ]
@@ -159,7 +338,12 @@ class DatabaseSeeder extends Seeder
         $p1b = Project::updateOrCreate(
             ['name' => 'Project 1B — Acme Mobile Warehouse App'],
             [
+                'code' => 'PRJ-ACM-02',
                 'client_id' => $customer1->id,
+                'team_lead_id' => $user1->id,
+                'team_member_ids' => [$user2->id],
+                'start_date' => '2026-03-01',
+                'target_date' => '2026-09-30',
                 'description' => 'Barcode scanning and real-time inventory synchronization for Acme Corp.',
                 'status' => 'active',
             ]
@@ -168,7 +352,12 @@ class DatabaseSeeder extends Seeder
         $p2 = Project::updateOrCreate(
             ['name' => 'Project 2 — Nexus Mobile App'],
             [
+                'code' => 'PRJ-NXH-01',
                 'client_id' => $customer2->id,
+                'team_lead_id' => $user1->id,
+                'team_member_ids' => [$user2->id, $user3->id],
+                'start_date' => '2026-02-10',
+                'target_date' => '2026-11-15',
                 'description' => 'Cross-platform mobile application for real-time patient biometric tracking and secure telehealth.',
                 'status' => 'active',
             ]
@@ -177,7 +366,12 @@ class DatabaseSeeder extends Seeder
         $p3 = Project::updateOrCreate(
             ['name' => 'Project 3 — Apex E-Commerce Platform'],
             [
+                'code' => 'PRJ-APX-01',
                 'client_id' => $customer3->id,
+                'team_lead_id' => $user1->id,
+                'team_member_ids' => [$user1->id, $user3->id],
+                'start_date' => '2026-04-01',
+                'target_date' => '2026-10-31',
                 'description' => 'High-throughput retail storefront with instant Stripe checkout and inventory synchronization.',
                 'status' => 'active',
             ]

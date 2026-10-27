@@ -35,6 +35,7 @@ Route::middleware('auth')->group(function () {
 
     // Member & Group Management
     Route::post('/members', [ChatController::class, 'addMember'])->name('chat.members.store');
+    Route::patch('/members/{user}', [ChatController::class, 'updateMember'])->name('chat.members.update');
     Route::delete('/members/{user}', [ChatController::class, 'deleteMember'])->name('chat.members.delete');
     Route::post('/users/{user}/assign-agent', [ChatController::class, 'assignCustomerAgent'])->name('chat.users.assign-agent');
     Route::post('/users/{user}/toggle-customer-access', [ChatController::class, 'toggleCustomerAccess'])->name('chat.users.toggle-customer-access');
@@ -57,4 +58,21 @@ Route::middleware('auth')->group(function () {
     Route::delete('/projects/{project}', [ChatController::class, 'deleteProject'])->name('projects.delete');
     Route::post('/users/{user}/toggle-team-lead', [ChatController::class, 'toggleTeamLead'])->name('users.toggle-team-lead');
     Route::post('/users/{user}/update-project', [ChatController::class, 'updateUserProject'])->name('users.update-project');
+
+    // Admin Separated Master Setup Tables (Departments, Designations, Clients, Assignments)
+    Route::post('/admin/departments', [\App\Http\Controllers\AdminSetupController::class, 'storeDepartment'])->name('admin.departments.store');
+    Route::patch('/admin/departments/{department}', [\App\Http\Controllers\AdminSetupController::class, 'updateDepartment'])->name('admin.departments.update');
+    Route::delete('/admin/departments/{department}', [\App\Http\Controllers\AdminSetupController::class, 'destroyDepartment'])->name('admin.departments.delete');
+
+    Route::post('/admin/designations', [\App\Http\Controllers\AdminSetupController::class, 'storeDesignation'])->name('admin.designations.store');
+    Route::patch('/admin/designations/{designation}', [\App\Http\Controllers\AdminSetupController::class, 'updateDesignation'])->name('admin.designations.update');
+    Route::delete('/admin/designations/{designation}', [\App\Http\Controllers\AdminSetupController::class, 'destroyDesignation'])->name('admin.designations.delete');
+
+    Route::post('/admin/clients', [\App\Http\Controllers\AdminSetupController::class, 'storeClient'])->name('admin.clients.store');
+    Route::patch('/admin/clients/{client}', [\App\Http\Controllers\AdminSetupController::class, 'updateClient'])->name('admin.clients.update');
+    Route::delete('/admin/clients/{client}', [\App\Http\Controllers\AdminSetupController::class, 'destroyClient'])->name('admin.clients.delete');
+
+    Route::post('/admin/client-assignments', [\App\Http\Controllers\AdminSetupController::class, 'storeAssignment'])->name('admin.client-assignments.store');
+    Route::patch('/admin/client-assignments/{clientAssignment}', [\App\Http\Controllers\AdminSetupController::class, 'updateAssignment'])->name('admin.client-assignments.update');
+    Route::delete('/admin/client-assignments/{clientAssignment}', [\App\Http\Controllers\AdminSetupController::class, 'destroyAssignment'])->name('admin.client-assignments.delete');
 });

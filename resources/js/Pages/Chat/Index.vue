@@ -52,6 +52,18 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    designations: {
+        type: Array,
+        default: () => [],
+    },
+    clients: {
+        type: Array,
+        default: () => [],
+    },
+    clientAssignments: {
+        type: Array,
+        default: () => [],
+    },
     cannedResponses: {
         type: Array,
         default: () => [],
@@ -970,6 +982,9 @@ onUnmounted(() => {
                 :tasks="tasks"
                 :conversations="localConversations"
                 :departments="departments"
+                :designations="designations"
+                :clients="clients"
+                :client-assignments="clientAssignments"
                 :current-agent="currentAgent"
                 @switch-to-tab="switchMainTab"
             />

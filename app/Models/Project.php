@@ -12,15 +12,36 @@ class Project extends Model
     use HasFactory;
 
     protected $fillable = [
+        'code',
         'name',
         'client_id',
+        'team_lead_id',
+        'team_member_ids',
+        'start_date',
+        'target_date',
         'description',
         'status',
+    ];
+
+    protected $casts = [
+        'team_member_ids' => 'array',
+        'start_date' => 'date:Y-m-d',
+        'target_date' => 'date:Y-m-d',
     ];
 
     public function client(): BelongsTo
     {
         return $this->belongsTo(User::class, 'client_id');
+    }
+
+    public function clientRecord(): BelongsTo
+    {
+        return $this->belongsTo(Client::class, 'client_id');
+    }
+
+    public function teamLead(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'team_lead_id');
     }
 
     public function tasks(): HasMany

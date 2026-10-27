@@ -15,11 +15,57 @@ class AuthController extends Controller
      */
     public function showLogin(): Response
     {
+        // 1. Admin Account from database
+        $adminAccount = User::where('is_admin', true)
+            ->orWhere('role', 'admin')
+            ->with('project:id,name')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->first();
+
+        // 2. Team Lead Account from database
+        $teamLeadAccount = User::where('is_admin', false)
+            ->where('is_customer', false)
+            ->where('is_team_lead', true)
+            ->with('project:id,name')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->first();
+
+        // 3. Employee Account from database (regular employee or staff)
+        $employeeAccount = User::where('is_admin', false)
+            ->where('is_customer', false)
+            ->where('is_team_lead', false)
+            ->where(function ($q) {
+                $q->where('role', '!=', 'customer')
+                  ->orWhereNull('role');
+            })
+            ->with('project:id,name')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->first()
+            ?? User::where('is_admin', false)
+                ->where('is_customer', false)
+                ->with('project:id,name')
+                ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+                ->first();
+
+        // 4. Client Account from database
+        $clientAccount = User::where(function ($q) {
+                $q->where('is_customer', true)
+                  ->orWhere('role', 'customer');
+            })
+            ->with('project:id,name')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->first();
+
+        // All users for reference
         $demoUsers = User::with('project:id,name')
-            ->select('id', 'name', 'email', 'avatar', 'role', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
+            ->select('id', 'name', 'email', 'avatar', 'role', 'department', 'designation', 'is_admin', 'is_team_lead', 'project_id', 'member_id')
             ->get();
 
         return Inertia::render('Auth/Login', [
+            'adminAccount' => $adminAccount,
+            'teamLeadAccount' => $teamLeadAccount,
+            'employeeAccount' => $employeeAccount,
+            'clientAccount' => $clientAccount,
             'demoUsers' => $demoUsers,
         ]);
     }
